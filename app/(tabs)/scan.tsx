@@ -30,6 +30,7 @@ import {
   EMPTY_SCAN_ANSWERS,
   isMLModelConfigured,
   classifyWithML,
+  AIClassification,
 } from '@/lib/bite-scanner';
 import { T } from '@/lib/theme';
 
@@ -142,7 +143,8 @@ export default function ScanScreen() {
   const [answers, setAnswers] = useState<ScanAnswers>({ ...EMPTY_SCAN_ANSWERS });
   const [currentQ, setCurrentQ] = useState(0);
   const [result, setResult] = useState<ScanResult | null>(null);
-  const [mlResult, setMlResult] = useState<{ label: string; confidence: number } | null>(null);
+  const [mlResult, setMlResult] = useState<AIClassification | null>(null);
+  const [mlLoading, setMlLoading] = useState(false);
 
   async function takePhoto() {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -161,15 +163,18 @@ export default function ScanScreen() {
     });
 
     if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
+      const uri = result.assets[0].uri;
+      setImageUri(uri);
       setStep('questions');
       setCurrentQ(0);
       setAnswers({ ...EMPTY_SCAN_ANSWERS });
 
-      // If ML model is configured, run it in parallel
+      // Run AI classification in the background while user answers questions
       if (isMLModelConfigured()) {
-        const ml = await classifyWithML(result.assets[0].uri);
-        setMlResult(ml);
+        setMlLoading(true);
+        classifyWithML(uri)
+          .then((ml) => setMlResult(ml))
+          .finally(() => setMlLoading(false));
       }
     }
   }
@@ -191,14 +196,17 @@ export default function ScanScreen() {
     });
 
     if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
+      const uri = result.assets[0].uri;
+      setImageUri(uri);
       setStep('questions');
       setCurrentQ(0);
       setAnswers({ ...EMPTY_SCAN_ANSWERS });
 
       if (isMLModelConfigured()) {
-        const ml = await classifyWithML(result.assets[0].uri);
-        setMlResult(ml);
+        setMlLoading(true);
+        classifyWithML(uri)
+          .then((ml) => setMlResult(ml))
+          .finally(() => setMlLoading(false));
       }
     }
   }
@@ -225,6 +233,7 @@ export default function ScanScreen() {
     setCurrentQ(0);
     setResult(null);
     setMlResult(null);
+    setMlLoading(false);
   }
 
   // ─── Photo Step ────────────────────────────────────────────────────────
@@ -377,15 +386,38 @@ export default function ScanScreen() {
             <Text style={styles.resultDesc}>{result.description}</Text>
           </View>
 
-          {/* ML Model result (if configured) */}
-          {mlResult && (
+          {/* AI Vision Classification */}
+          {mlLoading && (
             <View style={styles.mlCard}>
               <MaterialIcons name="smart-toy" size={20} color={T.primary} />
               <View style={{ flex: 1, marginLeft: T.sm }}>
-                <Text style={styles.mlTitle}>AI Model Classification</Text>
+                <Text style={styles.mlTitle}>AI analyzing photo...</Text>
                 <Text style={styles.mlText}>
-                  {mlResult.label} ({mlResult.confidence}% confidence)
+                  GPT-4o mini is classifying your image
                 </Text>
+              </View>
+            </View>
+          )}
+          {mlResult && !mlLoading && (
+            <View style={styles.mlCard}>
+              <MaterialIcons name="smart-toy" size={20} color={T.primary} />
+              <View style={{ flex: 1, marginLeft: T.sm }}>
+                <Text style={styles.mlTitle}>
+                  AI Classification: {mlResult.biteType}
+                </Text>
+                <Text style={styles.mlConfidence}>
+                  {mlResult.confidence}% confidence
+                </Text>
+                <Text style={styles.mlDesc}>{mlResult.description}</Text>
+                {mlResult.features.length > 0 && (
+                  <View style={styles.mlFeatures}>
+                    {mlResult.features.map((f, i) => (
+                      <View key={i} style={styles.mlFeatureChip}>
+                        <Text style={styles.mlFeatureText}>{f}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </View>
             </View>
           )}
@@ -654,13 +686,43 @@ const styles = StyleSheet.create({
   },
   mlTitle: {
     fontSize: T.fontSm,
-    fontWeight: '600',
+    fontWeight: '700',
     color: T.primaryDark,
+  },
+  mlConfidence: {
+    fontSize: T.fontXs,
+    fontWeight: '600',
+    color: T.primary,
+    marginTop: 2,
   },
   mlText: {
     fontSize: T.fontXs,
     color: T.textSecondary,
     marginTop: 2,
+  },
+  mlDesc: {
+    fontSize: T.fontSm,
+    color: T.text,
+    marginTop: T.sm,
+    lineHeight: 20,
+  },
+  mlFeatures: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: T.xs,
+    marginTop: T.sm,
+  },
+  mlFeatureChip: {
+    backgroundColor: T.card,
+    paddingHorizontal: T.sm,
+    paddingVertical: 3,
+    borderRadius: T.radiusFull,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  mlFeatureText: {
+    fontSize: 11,
+    color: T.textSecondary,
   },
   actionsTitle: {
     fontSize: T.fontMd,

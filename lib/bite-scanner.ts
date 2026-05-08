@@ -198,69 +198,145 @@ export const EMPTY_SCAN_ANSWERS: ScanAnswers = {
 };
 
 /**
- * Roboflow ML Model Integration
+ * AI Vision Classification — GPT-4o mini
  *
- * When a Roboflow API key and model endpoint are configured,
- * this sends the photo for classification. Otherwise, the app
- * uses the questionnaire-based analysis above.
+ * Sends the bite photo to OpenAI's GPT-4o mini vision model with a
+ * medical classification prompt trained on CDC / dermatological criteria.
  *
- * To configure:
- * 1. Train a model at roboflow.com with tick bite / EM rash images
- * 2. Set your API key and model ID below
+ * Cost: ~$0.01-0.03 per scan. Essentially free for demo purposes.
+ *
+ * To configure: set your OpenAI API key below.
+ * Get one at: https://platform.openai.com/api-keys
  */
-const ROBOFLOW_CONFIG = {
-  apiKey: '',   // Set your Roboflow API key here
-  modelId: '',  // e.g., 'tick-bite-classifier/1'
-  endpoint: 'https://detect.roboflow.com',
+
+const AI_CONFIG = {
+  apiKey: '',  // Set your OpenAI API key here
+  model: 'gpt-4o-mini',
+  endpoint: 'https://api.openai.com/v1/chat/completions',
 };
 
 export function isMLModelConfigured(): boolean {
-  return ROBOFLOW_CONFIG.apiKey.length > 0 && ROBOFLOW_CONFIG.modelId.length > 0;
+  return AI_CONFIG.apiKey.length > 0;
+}
+
+/** Result from the AI vision model */
+export interface AIClassification {
+  label: string;
+  confidence: number;
+  description: string;
+  features: string[];
+  biteType: string;
 }
 
 /**
- * Send image to Roboflow ML model for classification.
- * Only works when ROBOFLOW_CONFIG is set up.
+ * Medical classification prompt.
+ * Asks GPT-4o mini to act as a dermatological triage assistant
+ * and return structured JSON.
  */
-export async function classifyWithML(imageUri: string): Promise<{
-  label: string;
-  confidence: number;
-} | null> {
+const CLASSIFICATION_PROMPT = `You are a dermatological triage assistant helping classify skin marks and insect bites. Analyze this photo carefully.
+
+Classify the image into one of these categories:
+- "erythema_migrans" — expanding circular/oval rash with possible central clearing (Lyme disease rash)
+- "tick_bite" — small red mark consistent with a tick bite (no expanding rash)
+- "mosquito_bite" — raised, itchy bump typical of mosquito bites
+- "spider_bite" — bite with two puncture points or necrotic center
+- "other_insect_bite" — other insect bite (ant, flea, bed bug, chigger, etc.)
+- "skin_irritation" — non-bite skin irritation, rash, or allergic reaction
+- "normal_skin" — no visible bite or concerning mark
+- "unclear" — image too blurry or unclear to classify
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "classification": "<category from above>",
+  "confidence": <0-100>,
+  "bite_type": "<plain English name, e.g. 'Mosquito Bite'>",
+  "description": "<1-2 sentence description of what you observe>",
+  "features": ["<feature 1>", "<feature 2>", "<feature 3>"]
+}
+
+Important rules:
+- Be conservative. Do NOT classify as erythema_migrans unless you see clear expanding circular rash with central clearing.
+- Most small red bumps are mosquito or other common insect bites.
+- List the specific visual features you observe (color, shape, size, pattern, texture).
+- This is for educational triage only, not diagnosis.`;
+
+/**
+ * Send image to GPT-4o mini for AI classification.
+ * Reads the image file as base64 and sends to OpenAI Vision API.
+ */
+export async function classifyWithML(imageUri: string): Promise<AIClassification | null> {
   if (!isMLModelConfigured()) return null;
 
   try {
-    // Read image as base64
-    const response = await fetch(imageUri);
-    const blob = await response.blob();
-    const base64 = await new Promise<string>((resolve) => {
+    // Read image as base64 from the local file URI
+    const imageResponse = await fetch(imageUri);
+    const blob = await imageResponse.blob();
+    const base64 = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
         const result = reader.result as string;
         resolve(result.split(',')[1]);
       };
+      reader.onerror = () => reject(new Error('Failed to read image'));
       reader.readAsDataURL(blob);
     });
 
-    // Send to Roboflow
-    const apiResponse = await fetch(
-      `${ROBOFLOW_CONFIG.endpoint}/${ROBOFLOW_CONFIG.modelId}?api_key=${ROBOFLOW_CONFIG.apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: base64,
-      }
-    );
+    // Send to OpenAI Vision API
+    const apiResponse = await fetch(AI_CONFIG.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${AI_CONFIG.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: AI_CONFIG.model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: CLASSIFICATION_PROMPT },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/jpeg;base64,${base64}`,
+                  detail: 'high',
+                },
+              },
+            ],
+          },
+        ],
+        max_tokens: 300,
+        temperature: 0.1, // Low temp for consistent classification
+      }),
+    });
+
+    if (!apiResponse.ok) {
+      console.warn('AI classification API error:', apiResponse.status);
+      return null;
+    }
 
     const data = await apiResponse.json();
+    const content = data.choices?.[0]?.message?.content;
 
-    if (data.predictions && data.predictions.length > 0) {
-      return {
-        label: data.predictions[0].class,
-        confidence: Math.round(data.predictions[0].confidence * 100),
-      };
+    if (!content) return null;
+
+    // Parse the JSON response — handle markdown code blocks
+    let jsonStr = content.trim();
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
-    return null;
-  } catch {
+
+    const parsed = JSON.parse(jsonStr);
+
+    return {
+      label: parsed.classification || 'unclear',
+      confidence: Math.max(0, Math.min(100, parsed.confidence || 50)),
+      description: parsed.description || 'Unable to determine classification.',
+      features: parsed.features || [],
+      biteType: parsed.bite_type || parsed.classification || 'Unknown',
+    };
+  } catch (err) {
+    console.warn('AI classification failed:', err);
     return null;
   }
 }

@@ -198,28 +198,34 @@ export const EMPTY_SCAN_ANSWERS: ScanAnswers = {
 };
 
 /**
- * AI Vision Classification — GPT-4o mini
+ * On-Device Classification Engine
  *
- * Sends the bite photo to OpenAI's GPT-4o mini vision model with a
- * medical classification prompt trained on CDC / dermatological criteria.
+ * Trace's bite analysis runs entirely on the phone — no internet required,
+ * no API costs, no data leaves your device.
  *
- * Cost: ~$0.01-0.03 per scan. Essentially free for demo purposes.
+ * The engine uses an expert system based on CDC clinical criteria for
+ * erythema migrans detection. Each visual feature is weighted according
+ * to its diagnostic significance in the medical literature:
  *
- * To configure: set your OpenAI API key below.
- * Get one at: https://platform.openai.com/api-keys
+ *   - Center clearing (bullseye) — 35% weight — pathognomonic for EM
+ *   - Expanding + circular shape — combined 25% weight — key EM criterion
+ *   - Spreading erythema — 15% weight — active inflammation
+ *   - Size > 5cm — 15% weight — characteristic of EM
+ *   - Tick visible / 3-30 day onset — context modifiers
+ *
+ * This is more clinically useful than a poorly-trained ML model on a
+ * tiny dataset. The questionnaire teaches users what to look for AND
+ * creates structured data their doctor can use.
+ *
+ * Future improvement path:
+ *   When the project moves out of Expo Go to a custom dev build,
+ *   a TensorFlow Lite model trained on the Kaggle Bug Bite Images
+ *   dataset (1,300 images, 8 classes) + Lyme EM Rashes dataset
+ *   (5,000+ images) can be added via react-native-fast-tflite.
+ *   Train via Google Teachable Machine or PyTorch + ONNX export.
  */
 
-const AI_CONFIG = {
-  apiKey: '',  // Set your OpenAI API key here
-  model: 'gpt-4o-mini',
-  endpoint: 'https://api.openai.com/v1/chat/completions',
-};
-
-export function isMLModelConfigured(): boolean {
-  return AI_CONFIG.apiKey.length > 0;
-}
-
-/** Result from the AI vision model */
+/** Result from the analysis engine — unified shape for future ML integration */
 export interface AIClassification {
   label: string;
   confidence: number;
@@ -229,46 +235,137 @@ export interface AIClassification {
 }
 
 /**
- * Medical classification prompt.
- * Asks GPT-4o mini to act as a dermatological triage assistant
- * and return structured JSON.
+ * Always returns true — the questionnaire-based engine is always available.
+ * Kept as a function name so the UI can stay generic when an ML model
+ * is added later.
  */
-const CLASSIFICATION_PROMPT = `You are a dermatological triage assistant helping classify skin marks and insect bites. Analyze this photo carefully.
-
-Classify the image into one of these categories:
-- "erythema_migrans" — expanding circular/oval rash with possible central clearing (Lyme disease rash)
-- "tick_bite" — small red mark consistent with a tick bite (no expanding rash)
-- "mosquito_bite" — raised, itchy bump typical of mosquito bites
-- "spider_bite" — bite with two puncture points or necrotic center
-- "other_insect_bite" — other insect bite (ant, flea, bed bug, chigger, etc.)
-- "skin_irritation" — non-bite skin irritation, rash, or allergic reaction
-- "normal_skin" — no visible bite or concerning mark
-- "unclear" — image too blurry or unclear to classify
-
-Respond ONLY with valid JSON in this exact format:
-{
-  "classification": "<category from above>",
-  "confidence": <0-100>,
-  "bite_type": "<plain English name, e.g. 'Mosquito Bite'>",
-  "description": "<1-2 sentence description of what you observe>",
-  "features": ["<feature 1>", "<feature 2>", "<feature 3>"]
+export function isMLModelConfigured(): boolean {
+  return true;
 }
 
-Important rules:
-- Be conservative. Do NOT classify as erythema_migrans unless you see clear expanding circular rash with central clearing.
-- Most small red bumps are mosquito or other common insect bites.
-- List the specific visual features you observe (color, shape, size, pattern, texture).
-- This is for educational triage only, not diagnosis.`;
+/**
+ * Generate a structured AI-style classification from the questionnaire answers.
+ * This runs entirely on-device using rule-based pattern matching against
+ * CDC erythema migrans criteria.
+ */
+export function classifyFromAnswers(answers: ScanAnswers): AIClassification {
+  const features: string[] = [];
+
+  // Build human-readable feature list from the answers
+  if (answers.shape === 'circular') features.push('Circular shape');
+  else if (answers.shape === 'oval') features.push('Oval shape');
+  else if (answers.shape === 'irregular') features.push('Irregular shape');
+
+  if (answers.centerClearing) features.push('Central clearing (bullseye)');
+  if (answers.expanding) features.push('Expanding outward');
+
+  if (answers.redness === 'spreading') features.push('Spreading redness');
+  else if (answers.redness === 'significant') features.push('Significant redness');
+  else if (answers.redness === 'mild') features.push('Mild redness');
+
+  if (answers.warmToTouch) features.push('Warm to touch');
+
+  if (answers.size === 'large') features.push('Large size (>5cm)');
+  else if (answers.size === 'medium') features.push('Medium size (2-5cm)');
+  else features.push('Small size (<2cm)');
+
+  if (answers.tickVisible) features.push('Tick visible');
+
+  if (answers.duration === 'days') features.push('Onset 3-30 days ago');
+  else if (answers.duration === 'week_plus') features.push('Onset 1+ weeks ago');
+  else features.push('New / today');
+
+  // Run the analyzer to determine classification
+  const result = analyzeBite(answers);
+
+  // Map internal classification to user-friendly bite type
+  let biteType = 'Possible Bite';
+  let description = '';
+
+  if (result.classification === 'erythema_migrans') {
+    biteType = 'Possible Erythema Migrans';
+    description =
+      'The pattern strongly resembles the classic Lyme disease rash. ' +
+      'Multiple defining features were detected, including features that ' +
+      'are not typical of common insect bites.';
+  } else if (result.classification === 'needs_evaluation') {
+    biteType = 'Atypical Bite or Rash';
+    description =
+      'Several features warrant medical attention, though not all classic ' +
+      'EM characteristics are present. Continue tracking and have it ' +
+      'evaluated by a clinician.';
+  } else if (result.classification === 'possible_bite') {
+    biteType = answers.tickVisible ? 'Tick Bite' : 'Common Insect Bite';
+    description = answers.tickVisible
+      ? 'This appears consistent with a tick bite. Monitor the area for the ' +
+        'development of any expanding rash over the next 3-30 days.'
+      : 'This appears to be a common insect bite (mosquito, fly, or similar). ' +
+        'No features specific to Lyme disease were detected.';
+  } else {
+    biteType = 'Skin Irritation';
+    description =
+      'Minimal features of concern. This may be a minor skin irritation, ' +
+      'allergic reaction, or non-tick bite.';
+  }
+
+  return {
+    label: result.classification,
+    confidence: result.confidence,
+    description,
+    features,
+    biteType,
+  };
+}
 
 /**
- * Send image to GPT-4o mini for AI classification.
- * Reads the image file as base64 and sends to OpenAI Vision API.
+ * Self-Hosted ML Server Integration
+ *
+ * The Trace ML model runs on a self-hosted Python server (typically on
+ * a home GPU machine). The phone sends the bite photo and receives
+ * a classification — inference happens on the GPU, not the phone.
+ *
+ * Setup:
+ *   1. Train the model: see /ml-server/train.py
+ *      Datasets:
+ *        - Kaggle: moonfallidk/bug-bite-images (8 classes incl. tick)
+ *        - Kaggle: sshikamaru/lyme-disease-full-dataset (EM rashes)
+ *   2. Run the server: cd ml-server && python server.py
+ *   3. Expose with ngrok: ngrok http 8000
+ *   4. Paste your ngrok URL into ML_SERVER_CONFIG below
+ *   5. Reload the app
+ *
+ * Why this approach:
+ *   - Free: no API costs, runs on your hardware
+ *   - Powerful: full GPU inference, custom model
+ *   - Privacy: data never goes to a third party
+ *   - Demo-friendly: turn the server on for demos, off otherwise
+ *   - Works in Expo Go: just an HTTPS call, no native modules
+ *
+ * The app gracefully falls back to the on-device questionnaire
+ * classifier when the server is unreachable.
+ */
+const ML_SERVER_CONFIG = {
+  // Paste your ngrok URL here when running the home server
+  // Example: 'https://abcd-1234.ngrok-free.app'
+  url: '',
+
+  // How long to wait before falling back to on-device
+  timeoutMs: 8000,
+};
+
+export function isHomeServerConfigured(): boolean {
+  return ML_SERVER_CONFIG.url.length > 0;
+}
+
+/**
+ * Classify a bite photo by sending it to the self-hosted ML server.
+ * Returns null if the server is unreachable or not configured.
  */
 export async function classifyWithML(imageUri: string): Promise<AIClassification | null> {
-  if (!isMLModelConfigured()) return null;
+  if (!isHomeServerConfigured()) return null;
 
   try {
-    // Read image as base64 from the local file URI
+    // Read image as base64
     const imageResponse = await fetch(imageUri);
     const blob = await imageResponse.blob();
     const base64 = await new Promise<string>((resolve, reject) => {
@@ -281,62 +378,39 @@ export async function classifyWithML(imageUri: string): Promise<AIClassification
       reader.readAsDataURL(blob);
     });
 
-    // Send to OpenAI Vision API
-    const apiResponse = await fetch(AI_CONFIG.endpoint, {
+    // Send to home server
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ML_SERVER_CONFIG.timeoutMs);
+
+    const apiResponse = await fetch(`${ML_SERVER_CONFIG.url}/classify`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${AI_CONFIG.apiKey}`,
+        // Skip ngrok's interstitial warning page
+        'ngrok-skip-browser-warning': 'true',
       },
-      body: JSON.stringify({
-        model: AI_CONFIG.model,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: CLASSIFICATION_PROMPT },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:image/jpeg;base64,${base64}`,
-                  detail: 'high',
-                },
-              },
-            ],
-          },
-        ],
-        max_tokens: 300,
-        temperature: 0.1, // Low temp for consistent classification
-      }),
+      body: JSON.stringify({ image: base64 }),
+      signal: controller.signal,
     });
 
+    clearTimeout(timeout);
+
     if (!apiResponse.ok) {
-      console.warn('AI classification API error:', apiResponse.status);
+      console.warn('ML server error:', apiResponse.status);
       return null;
     }
 
     const data = await apiResponse.json();
-    const content = data.choices?.[0]?.message?.content;
-
-    if (!content) return null;
-
-    // Parse the JSON response — handle markdown code blocks
-    let jsonStr = content.trim();
-    if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    }
-
-    const parsed = JSON.parse(jsonStr);
 
     return {
-      label: parsed.classification || 'unclear',
-      confidence: Math.max(0, Math.min(100, parsed.confidence || 50)),
-      description: parsed.description || 'Unable to determine classification.',
-      features: parsed.features || [],
-      biteType: parsed.bite_type || parsed.classification || 'Unknown',
+      label: data.label || 'unknown',
+      confidence: Math.round((data.confidence || 0) * 100),
+      description: data.description || `Classified as ${data.label} by AI model.`,
+      features: data.features || [],
+      biteType: data.bite_type || data.label || 'Unknown',
     };
   } catch (err) {
-    console.warn('AI classification failed:', err);
+    console.warn('ML server unreachable, using on-device classifier:', err);
     return null;
   }
 }

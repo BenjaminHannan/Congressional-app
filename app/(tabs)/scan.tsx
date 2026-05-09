@@ -28,8 +28,9 @@ import {
   ScanAnswers,
   ScanResult,
   EMPTY_SCAN_ANSWERS,
-  isMLModelConfigured,
+  isHomeServerConfigured,
   classifyWithML,
+  classifyFromAnswers,
   AIClassification,
 } from '@/lib/bite-scanner';
 import { T } from '@/lib/theme';
@@ -169,8 +170,8 @@ export default function ScanScreen() {
       setCurrentQ(0);
       setAnswers({ ...EMPTY_SCAN_ANSWERS });
 
-      // Run AI classification in the background while user answers questions
-      if (isMLModelConfigured()) {
+      // If home GPU server is configured, classify the photo in the background
+      if (isHomeServerConfigured()) {
         setMlLoading(true);
         classifyWithML(uri)
           .then((ml) => setMlResult(ml))
@@ -202,7 +203,7 @@ export default function ScanScreen() {
       setCurrentQ(0);
       setAnswers({ ...EMPTY_SCAN_ANSWERS });
 
-      if (isMLModelConfigured()) {
+      if (isHomeServerConfigured()) {
         setMlLoading(true);
         classifyWithML(uri)
           .then((ml) => setMlResult(ml))
@@ -222,6 +223,13 @@ export default function ScanScreen() {
       const updatedAnswers = { ...answers, [q.key]: value };
       const analysis = analyzeBite(updatedAnswers);
       setResult(analysis);
+
+      // If the GPU server isn't configured, generate the on-device classification
+      // from the questionnaire so the AI card always has something to show.
+      if (!isHomeServerConfigured() && !mlResult) {
+        setMlResult(classifyFromAnswers(updatedAnswers));
+      }
+
       setStep('results');
     }
   }
@@ -386,14 +394,14 @@ export default function ScanScreen() {
             <Text style={styles.resultDesc}>{result.description}</Text>
           </View>
 
-          {/* AI Vision Classification */}
+          {/* AI Classification */}
           {mlLoading && (
             <View style={styles.mlCard}>
               <MaterialIcons name="smart-toy" size={20} color={T.primary} />
               <View style={{ flex: 1, marginLeft: T.sm }}>
                 <Text style={styles.mlTitle}>AI analyzing photo...</Text>
                 <Text style={styles.mlText}>
-                  GPT-4o mini is classifying your image
+                  Running inference on Trace model server
                 </Text>
               </View>
             </View>
@@ -407,6 +415,7 @@ export default function ScanScreen() {
                 </Text>
                 <Text style={styles.mlConfidence}>
                   {mlResult.confidence}% confidence
+                  {isHomeServerConfigured() ? ' • GPU model' : ' • on-device'}
                 </Text>
                 <Text style={styles.mlDesc}>{mlResult.description}</Text>
                 {mlResult.features.length > 0 && (

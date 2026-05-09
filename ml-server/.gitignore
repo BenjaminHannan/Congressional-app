@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Data + trained model (too big for git, regenerate locally)
+data/
+*.pt
+*.pth
+*.onnx
+
+# Local config
+.env
+*.log

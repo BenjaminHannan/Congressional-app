@@ -347,7 +347,7 @@ export function classifyFromAnswers(answers: ScanAnswers): AIClassification {
 const ML_SERVER_CONFIG = {
   // Paste your ngrok URL here when running the home server
   // Example: 'https://abcd-1234.ngrok-free.app'
-  url: '',
+  url: 'https://sprinkled-arose-mumbo.ngrok-free.dev',
 
   // How long to wait before falling back to on-device
   timeoutMs: 8000,

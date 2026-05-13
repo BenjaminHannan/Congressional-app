@@ -4,9 +4,44 @@
  * County-level incidence data for Lyme disease in New Hampshire.
  * Used in risk assessment and the NH heatmap display.
  *
- * Source: NH Division of Public Health Services, Bureau of Infectious Disease Control
- * Note: Data represents approximate incidence rates per 100,000 population.
- * Updated annually — these figures are representative estimates.
+ * ─── CDC SOURCE ─────────────────────────────────────────────────────────
+ * Dataset:     Lyme disease — Reported cases by state or locality and county,
+ *              National Notifiable Diseases Surveillance System (NNDSS)
+ * Publisher:   U.S. Centers for Disease Control and Prevention (CDC),
+ *              Division of Vector-Borne Diseases
+ * Year range:  2019–2023 (most recent 5-year window at the time of writing,
+ *              2026; verify against the latest CDC release before submission)
+ * URL:         https://www.cdc.gov/lyme/data-research/facts-stats/index.html
+ *              https://www.cdc.gov/lyme/data-research/facts-stats/lyme-disease-case-map.html
+ *
+ * Supplemental sources used for the README's NH-specific framing:
+ *   - NH DHHS Bureau of Infectious Disease Control — annual surveillance reports
+ *   - UNH Cooperative Extension tick-testing program, Grafton County 2017–2019
+ *     (cited for the "50%+ of adult blacklegged ticks infected" figure)
+ *
+ * ─── TODO BEFORE CAC SUBMISSION ─────────────────────────────────────────
+ * The values below were drafted as representative estimates. Each one must
+ * be cross-checked against the CDC NNDSS county table or the NH DHHS annual
+ * report and updated to the most recent published year. If a number is
+ * uncertain, prefer to under-state it rather than over-state it.
+ *
+ *   [ ] Belknap       incidenceRate: 145   — verify vs. CDC 2019–2023
+ *   [ ] Carroll       incidenceRate: 160   — verify vs. CDC 2019–2023
+ *   [ ] Cheshire      incidenceRate: 130   — verify vs. CDC 2019–2023
+ *   [ ] Coos          incidenceRate: 55    — verify vs. CDC 2019–2023
+ *   [ ] Grafton       incidenceRate: 120   — verify vs. CDC 2019–2023
+ *                                           (Hanover/Lyme report 200+/100k —
+ *                                           ensure county avg is consistent)
+ *   [ ] Hillsborough  incidenceRate: 110   — verify vs. CDC 2019–2023
+ *   [ ] Merrimack     incidenceRate: 125   — verify vs. CDC 2019–2023
+ *   [ ] Rockingham    incidenceRate: 155   — verify vs. CDC 2019–2023
+ *   [ ] Strafford     incidenceRate: 140   — verify vs. CDC 2019–2023
+ *   [ ] Sullivan      incidenceRate: 115   — verify vs. CDC 2019–2023
+ *   [ ] NH_STATE_AVERAGE_RATE: 128         — verify vs. CDC 2019–2023
+ *   [ ] US_NATIONAL_AVERAGE_RATE: 9        — verify vs. CDC 2019–2023
+ *   [ ] county populations — pull from US Census 2020 + ACS most recent year
+ *
+ * Data represents approximate incidence rates per 100,000 population.
  */
 
 export interface CountyData {

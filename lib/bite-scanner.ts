@@ -3,13 +3,15 @@
  *
  * Two-layer analysis:
  * 1. Visual questionnaire — guided assessment of bite appearance
- * 2. ML model hook — sends photo to Roboflow for classification
- *    (when configured; works without it via the questionnaire alone)
+ * 2. ML model — sends photo to a self-hosted GPU server for classification
+ *    (when configured; falls back to questionnaire alone when offline)
  *
- * The questionnaire approach is actually MORE clinically useful than
- * a mediocre ML model — it teaches the user what to look for AND
- * creates structured data a doctor can use.
+ * The questionnaire approach is clinically grounded in CDC criteria
+ * and creates structured data a doctor can use, while the ML model
+ * adds real image-based classification.
  */
+
+import * as FileSystem from 'expo-file-system/legacy';
 
 export interface ScanAnswers {
   shape: 'circular' | 'oval' | 'irregular' | 'none';
@@ -184,6 +186,59 @@ export function analyzeBite(answers: ScanAnswers): ScanResult {
 }
 
 /**
+ * Map an ML classification to a ScanResult.
+ *
+ * The model now returns a binary tick/not-tick decision. Since this app
+ * is specifically about Lyme disease, only tick bites carry meaningful
+ * medical risk in our scope.
+ */
+export function mlClassificationToResult(ml: AIClassification): ScanResult {
+  const label = ml.label.toLowerCase();
+  const isTick = label === 'tick' || label === 'ticks';
+
+  if (isTick) {
+    return {
+      classification: 'possible_bite',
+      confidence: ml.confidence,
+      title: 'Tick Bite',
+      description:
+        ml.description ||
+        'The model identified this as a tick bite. In New Hampshire, ' +
+        'tick bites carry a real risk of Lyme disease. Most tick bites do ' +
+        'NOT result in Lyme — but watch carefully and act early if symptoms appear.',
+      urgency: 'soon',
+      actions: [
+        'If a tick is still attached, remove it with fine-tipped tweezers — grasp close to the skin and pull straight out',
+        'Save the tick in a sealed bag (your doctor may want to identify the species)',
+        'Take a dated photo of the bite right now for comparison later',
+        'Watch for an expanding rash (especially with central clearing) over the next 3-30 days — see a doctor immediately if you see one',
+        'Log the bite date in Trace and check daily for new symptoms (fatigue, fever, headache, joint pain)',
+        'In NH, ask your doctor about empirical doxycycline if symptoms develop — IDSA guidelines support this in endemic areas',
+      ],
+    };
+  }
+
+  // Not a tick bite — much lower concern from a Lyme standpoint
+  return {
+    classification: 'low_concern',
+    confidence: ml.confidence,
+    title: 'Not a Tick Bite',
+    description:
+      ml.description ||
+      'The model is confident this is not a tick bite. From a Lyme disease ' +
+      'standpoint, no urgent action is needed. If the area concerns you for ' +
+      'other reasons (severe pain, infection, allergic reaction), see a doctor.',
+    urgency: 'monitor',
+    actions: [
+      'No tick-specific action needed',
+      'Keep the area clean and watch for normal healing',
+      'If it gets worse (spreading redness, pus, severe pain), see a doctor',
+      'Take another photo if anything changes — you can always rescan',
+    ],
+  };
+}
+
+/**
  * Default empty scan answers
  */
 export const EMPTY_SCAN_ANSWERS: ScanAnswers = {
@@ -232,6 +287,10 @@ export interface AIClassification {
   description: string;
   features: string[];
   biteType: string;
+  /** When true, the model is not confident enough to give a specific answer */
+  uncertain?: boolean;
+  /** Top 3 predictions with confidence — useful when uncertain */
+  topPredictions?: { label: string; confidence: number }[];
 }
 
 /**
@@ -360,25 +419,25 @@ export function isHomeServerConfigured(): boolean {
 /**
  * Classify a bite photo by sending it to the self-hosted ML server.
  * Returns null if the server is unreachable or not configured.
+ *
+ * Reads the photo as base64 via expo-file-system (reliable in RN),
+ * not the browser FileReader API.
  */
 export async function classifyWithML(imageUri: string): Promise<AIClassification | null> {
-  if (!isHomeServerConfigured()) return null;
+  if (!isHomeServerConfigured()) {
+    console.log('[ML] Server not configured — skipping');
+    return null;
+  }
 
   try {
-    // Read image as base64
-    const imageResponse = await fetch(imageUri);
-    const blob = await imageResponse.blob();
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        resolve(result.split(',')[1]);
-      };
-      reader.onerror = () => reject(new Error('Failed to read image'));
-      reader.readAsDataURL(blob);
+    // Read image as base64 using Expo's file system (works reliably on RN)
+    const base64 = await FileSystem.readAsStringAsync(imageUri, {
+      encoding: FileSystem.EncodingType.Base64,
     });
 
-    // Send to home server
+    console.log(`[ML] Sending ${base64.length} chars of base64 to server...`);
+
+    // Send to home server with timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ML_SERVER_CONFIG.timeoutMs);
 
@@ -396,11 +455,13 @@ export async function classifyWithML(imageUri: string): Promise<AIClassification
     clearTimeout(timeout);
 
     if (!apiResponse.ok) {
-      console.warn('ML server error:', apiResponse.status);
+      const text = await apiResponse.text().catch(() => '');
+      console.warn(`[ML] Server error ${apiResponse.status}: ${text.slice(0, 200)}`);
       return null;
     }
 
     const data = await apiResponse.json();
+    console.log(`[ML] Got classification: ${data.label} (${data.confidence})`);
 
     return {
       label: data.label || 'unknown',
@@ -409,8 +470,8 @@ export async function classifyWithML(imageUri: string): Promise<AIClassification
       features: data.features || [],
       biteType: data.bite_type || data.label || 'Unknown',
     };
-  } catch (err) {
-    console.warn('ML server unreachable, using on-device classifier:', err);
+  } catch (err: any) {
+    console.warn('[ML] Request failed:', err?.message || err);
     return null;
   }
 }

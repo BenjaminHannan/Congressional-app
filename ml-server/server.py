@@ -94,12 +94,17 @@ class ClassifyRequest(BaseModel):
 
 
 class ClassifyResponse(BaseModel):
-    label: str
-    confidence: float
+    # Binary tick/not-tick decision (the answer the app actually uses)
+    is_tick: bool
+    tick_probability: float        # 0-1, probability this is a tick bite
+    confidence: float              # 0-1, how confident in the binary decision
+
+    # Friendly fields for the app
+    label: str                     # "tick" or "not_tick"
     bite_type: str
     description: str
-    features: list[str]
-    top_predictions: list[dict]
+    features: list[str]            # Top 3 predictions for transparency
+    top_predictions: list[dict]    # Full 8-class top-3
 
 
 # ── Load model on startup ──
@@ -161,6 +166,14 @@ def health():
 
 @app.post('/classify', response_model=ClassifyResponse)
 def classify(req: ClassifyRequest):
+    """
+    Binary tick / not-tick classification.
+
+    Strategy: run the 8-way model, then collapse to binary by summing
+    the tick probability vs everything else. Decision threshold defaults
+    to 0.5 but is asymmetric — we lean conservative because false negatives
+    (missing a real tick bite) are worse than false positives.
+    """
     if model is None:
         raise HTTPException(503, 'Model not loaded. Run train.py first.')
 
@@ -177,32 +190,56 @@ def classify(req: ClassifyRequest):
         logits = model(tensor)
         probs = torch.softmax(logits, dim=1)[0]
 
-    # Top prediction
+    # Find tick class index
+    tick_idx = classes.index('ticks') if 'ticks' in classes else None
+    if tick_idx is None:
+        raise HTTPException(500, 'Model has no "ticks" class.')
+
+    tick_prob = probs[tick_idx].item()
+    not_tick_prob = 1.0 - tick_prob
+
+    # Conservative decision: only call it a tick bite if probability is meaningful.
+    # We use 0.35 as the threshold — false positives are better than false negatives
+    # for Lyme screening, but we don't want to flag every random photo as a tick.
+    is_tick = tick_prob >= 0.35
+    confidence = tick_prob if is_tick else not_tick_prob
+
+    # Top-3 from full 8-way predictions for transparency
     top_probs, top_idxs = torch.topk(probs, k=min(3, len(classes)))
     top_predictions = [
         {'label': classes[idx.item()], 'confidence': prob.item()}
         for prob, idx in zip(top_probs, top_idxs)
     ]
 
-    label = top_predictions[0]['label']
-    confidence = top_predictions[0]['confidence']
+    # Friendly text
+    if is_tick:
+        bite_type = 'Tick Bite'
+        description = (
+            f'The model classified this as a tick bite (model gave it '
+            f'{round(tick_prob * 100)}% probability). In New Hampshire, tick '
+            f'bites carry a real risk of Lyme disease — monitor the area carefully.'
+        )
+    else:
+        bite_type = 'Not a Tick Bite'
+        description = (
+            f'The model is {round(not_tick_prob * 100)}% confident this is NOT a tick bite. '
+            f'Note: the model is trained on bug bites, so unfamiliar things '
+            f'(pimples, scratches, etc.) may be classified as the closest match.'
+        )
 
-    info = CLASS_INFO.get(label, {
-        'bite_type': label.replace('_', ' ').title(),
-        'description': f'Classified as {label} by the model.',
-    })
-
-    # Generate readable feature list from top-3 predictions
+    # Show what the model actually saw — top 3 of all 8 classes
     features = [
         f'{p["label"].replace("_", " ").title()}: {round(p["confidence"] * 100)}%'
         for p in top_predictions
     ]
 
     return ClassifyResponse(
-        label=label,
+        is_tick=is_tick,
+        tick_probability=tick_prob,
         confidence=confidence,
-        bite_type=info['bite_type'],
-        description=info['description'],
+        label='tick' if is_tick else 'not_tick',
+        bite_type=bite_type,
+        description=description,
         features=features,
         top_predictions=top_predictions,
     )

@@ -1,13 +1,14 @@
 /**
  * Trace — Bite Scanner Screen
  *
- * Take a photo of a bite → guided visual assessment → risk classification.
+ * Take a photo → AI model classifies it → see urgency + recommended actions.
  *
  * Flow:
- * 1. Take or select a photo
- * 2. Answer guided questions about what you see
- * 3. Get a classification + recommended actions
- * 4. Save the scan to your symptom log
+ *  1. photo: pick or take a bite photo
+ *  2. analyzing: send to GPU server for inference
+ *  3. results: classification + urgency + actions
+ *
+ * If the GPU server is unreachable, shows a graceful retry option.
  */
 
 import { useState } from 'react';
@@ -20,109 +21,20 @@ import {
   ScrollView,
   Image,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {
-  analyzeBite,
-  ScanAnswers,
   ScanResult,
-  EMPTY_SCAN_ANSWERS,
   isHomeServerConfigured,
   classifyWithML,
-  classifyFromAnswers,
+  mlClassificationToResult,
   AIClassification,
 } from '@/lib/bite-scanner';
 import { T } from '@/lib/theme';
 
-type Step = 'photo' | 'questions' | 'results';
-
-// Question definitions for the guided assessment
-const QUESTIONS: {
-  key: keyof ScanAnswers;
-  question: string;
-  hint: string;
-  options: { value: any; label: string }[];
-}[] = [
-  {
-    key: 'shape',
-    question: 'What shape is the affected area?',
-    hint: 'Look at the overall outline of the redness or mark',
-    options: [
-      { value: 'circular', label: 'Circular / round' },
-      { value: 'oval', label: 'Oval' },
-      { value: 'irregular', label: 'Irregular / no clear shape' },
-      { value: 'none', label: 'No visible mark' },
-    ],
-  },
-  {
-    key: 'redness',
-    question: 'How red is the area?',
-    hint: 'Compare to the surrounding normal skin',
-    options: [
-      { value: 'none', label: 'No redness' },
-      { value: 'mild', label: 'Slightly pink' },
-      { value: 'significant', label: 'Clearly red' },
-      { value: 'spreading', label: 'Red and spreading outward' },
-    ],
-  },
-  {
-    key: 'centerClearing',
-    question: 'Is there clearing in the center?',
-    hint: 'A "bullseye" has a red outer ring with normal/clear skin in the middle',
-    options: [
-      { value: true, label: 'Yes — lighter in the center' },
-      { value: false, label: 'No — evenly colored' },
-    ],
-  },
-  {
-    key: 'expanding',
-    question: 'Has the area been growing or expanding?',
-    hint: 'Tip: draw a pen circle around the edge to track over 24 hours',
-    options: [
-      { value: true, label: 'Yes, it\'s getting bigger' },
-      { value: false, label: 'No, same size' },
-    ],
-  },
-  {
-    key: 'size',
-    question: 'How large is the affected area?',
-    hint: 'Estimate using a coin for reference',
-    options: [
-      { value: 'small', label: 'Small (< 2 cm / dime)' },
-      { value: 'medium', label: 'Medium (2-5 cm / quarter to half dollar)' },
-      { value: 'large', label: 'Large (> 5 cm / bigger than a half dollar)' },
-    ],
-  },
-  {
-    key: 'warmToTouch',
-    question: 'Is the area warm to the touch?',
-    hint: 'Feel it with the back of your hand and compare to nearby skin',
-    options: [
-      { value: true, label: 'Yes, noticeably warm' },
-      { value: false, label: 'No, normal temperature' },
-    ],
-  },
-  {
-    key: 'tickVisible',
-    question: 'Can you see a tick in or near the area?',
-    hint: 'Ticks can be as small as a poppy seed (nymphs)',
-    options: [
-      { value: true, label: 'Yes, I can see a tick' },
-      { value: false, label: 'No tick visible' },
-    ],
-  },
-  {
-    key: 'duration',
-    question: 'When did you first notice this?',
-    hint: 'Lyme rash (EM) typically appears 3-30 days after a bite',
-    options: [
-      { value: 'new', label: 'Just now / today' },
-      { value: 'days', label: 'A few days ago' },
-      { value: 'week_plus', label: 'A week or more ago' },
-    ],
-  },
-];
+type Step = 'photo' | 'analyzing' | 'results' | 'error';
 
 const URGENCY_COLORS = {
   emergency: T.danger,
@@ -134,18 +46,49 @@ const URGENCY_COLORS = {
 const URGENCY_LABELS = {
   emergency: 'EMERGENCY',
   urgent: 'SEE A DOCTOR SOON',
-  soon: 'SCHEDULE AN APPOINTMENT',
+  soon: 'MONITOR & CONSIDER DOCTOR',
   monitor: 'MONITOR AT HOME',
 };
 
 export default function ScanScreen() {
   const [step, setStep] = useState<Step>('photo');
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [answers, setAnswers] = useState<ScanAnswers>({ ...EMPTY_SCAN_ANSWERS });
-  const [currentQ, setCurrentQ] = useState(0);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mlResult, setMlResult] = useState<AIClassification | null>(null);
-  const [mlLoading, setMlLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string>('');
+
+  /** Run the photo through the ML model and produce a ScanResult */
+  async function analyzePhoto(uri: string) {
+    setStep('analyzing');
+    setErrorMsg('');
+
+    if (!isHomeServerConfigured()) {
+      setErrorMsg(
+        'AI model server is not configured. Set ML_SERVER_CONFIG.url in lib/bite-scanner.ts.'
+      );
+      setStep('error');
+      return;
+    }
+
+    try {
+      const ml = await classifyWithML(uri);
+      if (!ml) {
+        setErrorMsg(
+          'Could not reach the AI model. Make sure the GPU server and ngrok tunnel are running.'
+        );
+        setStep('error');
+        return;
+      }
+
+      setMlResult(ml);
+      const scanResult = mlClassificationToResult(ml);
+      setResult(scanResult);
+      setStep('results');
+    } catch (err: any) {
+      setErrorMsg(`Analysis failed: ${err?.message || 'Unknown error'}`);
+      setStep('error');
+    }
+  }
 
   async function takePhoto() {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -166,17 +109,7 @@ export default function ScanScreen() {
     if (!result.canceled && result.assets[0]) {
       const uri = result.assets[0].uri;
       setImageUri(uri);
-      setStep('questions');
-      setCurrentQ(0);
-      setAnswers({ ...EMPTY_SCAN_ANSWERS });
-
-      // If home GPU server is configured, classify the photo in the background
-      if (isHomeServerConfigured()) {
-        setMlLoading(true);
-        classifyWithML(uri)
-          .then((ml) => setMlResult(ml))
-          .finally(() => setMlLoading(false));
-      }
+      analyzePhoto(uri);
     }
   }
 
@@ -199,49 +132,20 @@ export default function ScanScreen() {
     if (!result.canceled && result.assets[0]) {
       const uri = result.assets[0].uri;
       setImageUri(uri);
-      setStep('questions');
-      setCurrentQ(0);
-      setAnswers({ ...EMPTY_SCAN_ANSWERS });
-
-      if (isHomeServerConfigured()) {
-        setMlLoading(true);
-        classifyWithML(uri)
-          .then((ml) => setMlResult(ml))
-          .finally(() => setMlLoading(false));
-      }
-    }
-  }
-
-  function answerQuestion(value: any) {
-    const q = QUESTIONS[currentQ];
-    setAnswers((prev) => ({ ...prev, [q.key]: value }));
-
-    if (currentQ < QUESTIONS.length - 1) {
-      setCurrentQ(currentQ + 1);
-    } else {
-      // All questions answered — calculate result
-      const updatedAnswers = { ...answers, [q.key]: value };
-      const analysis = analyzeBite(updatedAnswers);
-      setResult(analysis);
-
-      // If the GPU server isn't configured, generate the on-device classification
-      // from the questionnaire so the AI card always has something to show.
-      if (!isHomeServerConfigured() && !mlResult) {
-        setMlResult(classifyFromAnswers(updatedAnswers));
-      }
-
-      setStep('results');
+      analyzePhoto(uri);
     }
   }
 
   function reset() {
     setStep('photo');
     setImageUri(null);
-    setAnswers({ ...EMPTY_SCAN_ANSWERS });
-    setCurrentQ(0);
     setResult(null);
     setMlResult(null);
-    setMlLoading(false);
+    setErrorMsg('');
+  }
+
+  function retry() {
+    if (imageUri) analyzePhoto(imageUri);
   }
 
   // ─── Photo Step ────────────────────────────────────────────────────────
@@ -251,11 +155,10 @@ export default function ScanScreen() {
         <ScrollView contentContainerStyle={styles.scroll}>
           <View style={styles.photoHeader}>
             <MaterialIcons name="photo-camera" size={48} color={T.primary} />
-            <Text style={styles.photoTitle}>Scan a Bite or Rash</Text>
+            <Text style={styles.photoTitle}>Scan a Bite</Text>
             <Text style={styles.photoDesc}>
-              Take a close-up photo of the affected area. Place a coin next
-              to it for scale if possible. Then answer a few questions about
-              what you see.
+              Take a close-up photo of the bite or affected area. The AI model
+              will classify it and tell you what to do.
             </Text>
           </View>
 
@@ -289,8 +192,8 @@ export default function ScanScreen() {
               <Text style={styles.tipText}>Get close — fill the frame with the affected area</Text>
             </View>
             <View style={styles.tipRow}>
-              <MaterialIcons name="monetization-on" size={16} color={T.primary} />
-              <Text style={styles.tipText}>Place a coin next to the area for size reference</Text>
+              <MaterialIcons name="center-focus-strong" size={16} color={T.primary} />
+              <Text style={styles.tipText}>Make sure the area is in focus</Text>
             </View>
             <View style={styles.tipRow}>
               <MaterialIcons name="replay" size={16} color={T.primary} />
@@ -302,54 +205,57 @@ export default function ScanScreen() {
     );
   }
 
-  // ─── Questions Step ────────────────────────────────────────────────────
-  if (step === 'questions') {
-    const q = QUESTIONS[currentQ];
-    const progress = ((currentQ + 1) / QUESTIONS.length) * 100;
+  // ─── Analyzing Step ────────────────────────────────────────────────────
+  if (step === 'analyzing') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.analyzeContainer}>
+          {imageUri && (
+            <Image source={{ uri: imageUri }} style={styles.analyzeImage} />
+          )}
+          <View style={styles.analyzeContent}>
+            <ActivityIndicator size="large" color={T.primary} />
+            <Text style={styles.analyzeTitle}>Analyzing photo...</Text>
+            <Text style={styles.analyzeDesc}>
+              The AI model is classifying your image
+            </Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
+  // ─── Error Step ────────────────────────────────────────────────────────
+  if (step === 'error') {
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.scroll}>
-          {/* Photo preview */}
           {imageUri && (
-            <Image source={{ uri: imageUri }} style={styles.previewImage} />
+            <Image source={{ uri: imageUri }} style={styles.resultImage} />
           )}
-
-          {/* Progress bar */}
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${progress}%` }]} />
+          <View style={styles.errorCard}>
+            <MaterialIcons name="error-outline" size={40} color={T.danger} />
+            <Text style={styles.errorTitle}>Analysis Failed</Text>
+            <Text style={styles.errorText}>{errorMsg}</Text>
           </View>
-          <Text style={styles.progressText}>
-            Question {currentQ + 1} of {QUESTIONS.length}
-          </Text>
 
-          {/* Question */}
-          <Text style={styles.question}>{q.question}</Text>
-          <Text style={styles.questionHint}>{q.hint}</Text>
+          <TouchableOpacity
+            style={styles.cameraButton}
+            onPress={retry}
+            activeOpacity={0.8}
+          >
+            <MaterialIcons name="refresh" size={24} color={T.white} />
+            <Text style={styles.cameraButtonText}>Try Again</Text>
+          </TouchableOpacity>
 
-          {/* Options */}
-          {q.options.map((opt, i) => (
-            <TouchableOpacity
-              key={i}
-              style={styles.answerOption}
-              onPress={() => answerQuestion(opt.value)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.answerText}>{opt.label}</Text>
-              <MaterialIcons name="chevron-right" size={20} color={T.textMuted} />
-            </TouchableOpacity>
-          ))}
-
-          {/* Back button */}
-          {currentQ > 0 && (
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => setCurrentQ(currentQ - 1)}
-            >
-              <MaterialIcons name="arrow-back" size={18} color={T.textSecondary} />
-              <Text style={styles.backText}>Previous question</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={styles.galleryButton}
+            onPress={reset}
+            activeOpacity={0.8}
+          >
+            <MaterialIcons name="photo-camera" size={20} color={T.primary} />
+            <Text style={styles.galleryButtonText}>Take a New Photo</Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
@@ -363,21 +269,20 @@ export default function ScanScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.scroll}>
-          {/* Photo */}
           {imageUri && (
             <Image source={{ uri: imageUri }} style={styles.resultImage} />
           )}
 
-          {/* Classification badge */}
+          {/* Urgency badge */}
           <View style={[styles.urgencyBadge, { backgroundColor: urgencyColor }]}>
             <Text style={styles.urgencyText}>{urgencyLabel}</Text>
           </View>
 
-          {/* Result card */}
+          {/* Main classification card */}
           <View style={styles.resultCard}>
             <Text style={styles.resultTitle}>{result.title}</Text>
             <View style={styles.confidenceRow}>
-              <Text style={styles.confidenceLabel}>Confidence:</Text>
+              <Text style={styles.confidenceLabel}>AI Confidence:</Text>
               <View style={styles.confidenceBar}>
                 <View
                   style={[
@@ -394,45 +299,28 @@ export default function ScanScreen() {
             <Text style={styles.resultDesc}>{result.description}</Text>
           </View>
 
-          {/* AI Classification */}
-          {mlLoading && (
+          {/* AI model breakdown */}
+          {mlResult && mlResult.features.length > 0 && (
             <View style={styles.mlCard}>
-              <MaterialIcons name="smart-toy" size={20} color={T.primary} />
-              <View style={{ flex: 1, marginLeft: T.sm }}>
-                <Text style={styles.mlTitle}>AI analyzing photo...</Text>
-                <Text style={styles.mlText}>
-                  Running inference on Trace model server
-                </Text>
+              <View style={styles.mlHeader}>
+                <MaterialIcons name="smart-toy" size={20} color={T.primary} />
+                <Text style={styles.mlTitle}>Model Breakdown</Text>
               </View>
-            </View>
-          )}
-          {mlResult && !mlLoading && (
-            <View style={styles.mlCard}>
-              <MaterialIcons name="smart-toy" size={20} color={T.primary} />
-              <View style={{ flex: 1, marginLeft: T.sm }}>
-                <Text style={styles.mlTitle}>
-                  AI Classification: {mlResult.biteType}
-                </Text>
-                <Text style={styles.mlConfidence}>
-                  {mlResult.confidence}% confidence
-                  {isHomeServerConfigured() ? ' • GPU model' : ' • on-device'}
-                </Text>
-                <Text style={styles.mlDesc}>{mlResult.description}</Text>
-                {mlResult.features.length > 0 && (
-                  <View style={styles.mlFeatures}>
-                    {mlResult.features.map((f, i) => (
-                      <View key={i} style={styles.mlFeatureChip}>
-                        <Text style={styles.mlFeatureText}>{f}</Text>
-                      </View>
-                    ))}
+              <Text style={styles.mlSubtext}>
+                Top predictions from the trained model
+              </Text>
+              <View style={styles.mlFeatures}>
+                {mlResult.features.map((f, i) => (
+                  <View key={i} style={styles.mlFeatureChip}>
+                    <Text style={styles.mlFeatureText}>{f}</Text>
                   </View>
-                )}
+                ))}
               </View>
             </View>
           )}
 
           {/* Recommended actions */}
-          <Text style={styles.actionsTitle}>Recommended Actions</Text>
+          <Text style={styles.actionsTitle}>What To Do</Text>
           {result.actions.map((action, i) => (
             <View key={i} style={styles.actionRow}>
               <View style={styles.actionNumber}>
@@ -449,23 +337,13 @@ export default function ScanScreen() {
             activeOpacity={0.8}
           >
             <MaterialIcons name="photo-camera" size={22} color={T.white} />
-            <Text style={styles.scanAgainText}>Scan Another Area</Text>
+            <Text style={styles.scanAgainText}>Scan Another Bite</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.resetButton}
-            onPress={reset}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.resetText}>Done</Text>
-          </TouchableOpacity>
-
-          {/* Disclaimer */}
           <Text style={styles.disclaimer}>
             This scan is for educational purposes only. It does not replace
-            clinical evaluation. A visual assessment cannot diagnose Lyme
-            disease — only a healthcare provider can make a diagnosis.
-            If you are concerned, see a doctor.
+            clinical evaluation. Only a healthcare provider can diagnose
+            Lyme disease or any medical condition. If you are concerned, see a doctor.
           </Text>
         </ScrollView>
       </SafeAreaView>
@@ -553,75 +431,63 @@ const styles = StyleSheet.create({
     color: T.text,
   },
 
-  // Questions step
-  previewImage: {
-    width: '100%',
-    height: 200,
+  // Analyzing step
+  analyzeContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: T.lg,
+  },
+  analyzeImage: {
+    width: 220,
+    height: 220,
     borderRadius: T.radius,
-    marginBottom: T.md,
-    backgroundColor: T.border,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: T.border,
-    borderRadius: 2,
-    marginBottom: T.xs,
-  },
-  progressFill: {
-    height: 4,
-    backgroundColor: T.primary,
-    borderRadius: 2,
-  },
-  progressText: {
-    fontSize: T.fontXs,
-    color: T.textMuted,
     marginBottom: T.lg,
+    backgroundColor: T.border,
   },
-  question: {
+  analyzeContent: {
+    alignItems: 'center',
+    gap: T.sm,
+  },
+  analyzeTitle: {
     fontSize: T.fontLg,
     fontWeight: '700',
     color: T.text,
-    marginBottom: T.xs,
-  },
-  questionHint: {
-    fontSize: T.fontSm,
-    color: T.textSecondary,
-    marginBottom: T.md,
-    lineHeight: 20,
-  },
-  answerOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: T.card,
-    borderRadius: T.radiusSm,
-    padding: T.md,
-    marginBottom: T.sm,
-    borderWidth: 1,
-    borderColor: T.border,
-  },
-  answerText: {
-    fontSize: T.fontMd,
-    color: T.text,
-    flex: 1,
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: T.xs,
     marginTop: T.md,
-    padding: T.sm,
   },
-  backText: {
+  analyzeDesc: {
     fontSize: T.fontSm,
     color: T.textSecondary,
+  },
+
+  // Error step
+  errorCard: {
+    backgroundColor: T.dangerBg,
+    borderRadius: T.radius,
+    padding: T.lg,
+    alignItems: 'center',
+    marginBottom: T.md,
+    borderWidth: 1,
+    borderColor: T.dangerLight,
+  },
+  errorTitle: {
+    fontSize: T.fontLg,
+    fontWeight: '700',
+    color: T.danger,
+    marginTop: T.sm,
+  },
+  errorText: {
+    fontSize: T.fontSm,
+    color: T.text,
+    textAlign: 'center',
+    marginTop: T.sm,
+    lineHeight: 20,
   },
 
   // Results step
   resultImage: {
     width: '100%',
-    height: 220,
+    height: 240,
     borderRadius: T.radius,
     marginBottom: T.md,
     backgroundColor: T.border,
@@ -685,54 +551,50 @@ const styles = StyleSheet.create({
     color: T.textSecondary,
     lineHeight: 22,
   },
+
+  // ML breakdown
   mlCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: T.primaryFaint,
     borderRadius: T.radiusSm,
     padding: T.md,
     marginBottom: T.md,
+  },
+  mlHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.sm,
   },
   mlTitle: {
     fontSize: T.fontSm,
     fontWeight: '700',
     color: T.primaryDark,
   },
-  mlConfidence: {
-    fontSize: T.fontXs,
-    fontWeight: '600',
-    color: T.primary,
-    marginTop: 2,
-  },
-  mlText: {
+  mlSubtext: {
     fontSize: T.fontXs,
     color: T.textSecondary,
     marginTop: 2,
-  },
-  mlDesc: {
-    fontSize: T.fontSm,
-    color: T.text,
-    marginTop: T.sm,
-    lineHeight: 20,
+    marginBottom: T.sm,
   },
   mlFeatures: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: T.xs,
-    marginTop: T.sm,
   },
   mlFeatureChip: {
     backgroundColor: T.card,
     paddingHorizontal: T.sm,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: T.radiusFull,
     borderWidth: 1,
     borderColor: T.border,
   },
   mlFeatureText: {
-    fontSize: 11,
+    fontSize: 12,
     color: T.textSecondary,
+    fontWeight: '500',
   },
+
+  // Actions
   actionsTitle: {
     fontSize: T.fontMd,
     fontWeight: '700',
@@ -778,16 +640,6 @@ const styles = StyleSheet.create({
     color: T.white,
     fontSize: T.fontMd,
     fontWeight: '600',
-  },
-  resetButton: {
-    alignItems: 'center',
-    padding: T.md,
-    marginTop: T.sm,
-  },
-  resetText: {
-    color: T.textSecondary,
-    fontSize: T.fontMd,
-    fontWeight: '500',
   },
   disclaimer: {
     fontSize: T.fontXs,

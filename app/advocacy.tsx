@@ -20,6 +20,7 @@ import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { getAdvocacyTips } from '@/lib/risk-engine';
 import { T } from '@/lib/theme';
+import { Citations } from '@/components/citations';
 
 export default function AdvocacyModal() {
   const router = useRouter();
@@ -49,6 +50,7 @@ export default function AdvocacyModal() {
             If your doctor is dismissing your symptoms, here's how to advocate
             for yourself — with evidence, not argument.
           </Text>
+          <Citations />
         </View>
 
         {/* Tips */}

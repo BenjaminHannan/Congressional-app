@@ -24,6 +24,7 @@ import { SymptomChecks } from '@/lib/types';
 import { saveSymptomLog, generateId, getExposure, getSymptomLogs } from '@/lib/storage';
 import { calculateRisk } from '@/lib/risk-engine';
 import { T } from '@/lib/theme';
+import { Citations } from '@/components/citations';
 
 type Step = 'symptoms' | 'severity' | 'result';
 
@@ -324,6 +325,7 @@ export default function CheckScreen() {
           <View style={styles.recCard}>
             <Text style={styles.recTitle}>What This Means</Text>
             <Text style={styles.recText}>{result.recommendation}</Text>
+            <Citations />
           </View>
 
           {/* Contributing factors */}

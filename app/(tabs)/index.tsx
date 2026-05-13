@@ -129,6 +129,30 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Empty state — first-run, before any symptom log or exposure */}
+        {!risk && (
+          <View style={styles.emptyCard}>
+            <MaterialIcons name="add-circle-outline" size={32} color={T.primary} />
+            <Text style={styles.emptyTitle}>
+              Log your first symptom to start tracking
+            </Text>
+            <Text style={styles.emptyDesc}>
+              Daily check-ins build a dated record you can hand to a doctor —
+              the single most convincing piece of evidence for early Lyme.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyButton}
+              onPress={() => router.push('/(tabs)/check')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Start your first symptom check"
+            >
+              <MaterialIcons name="fact-check" size={20} color={T.white} />
+              <Text style={styles.emptyButtonText}>Start Symptom Check</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Stats Row */}
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
@@ -257,6 +281,45 @@ const styles = StyleSheet.create({
   riskBadgeText: { color: T.white, fontWeight: '700', fontSize: T.fontXs },
   riskScore: { fontSize: T.fontXs, color: T.textSecondary, marginBottom: T.xs },
   riskRec: { fontSize: T.fontSm, color: T.text, lineHeight: 20 },
+  emptyCard: {
+    backgroundColor: T.primaryFaint,
+    borderRadius: T.radius,
+    padding: T.lg,
+    marginBottom: T.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: T.primaryLight,
+  },
+  emptyTitle: {
+    fontSize: T.fontLg,
+    fontWeight: '700',
+    color: T.text,
+    marginTop: T.sm,
+    textAlign: 'center',
+  },
+  emptyDesc: {
+    fontSize: T.fontSm,
+    color: T.textSecondary,
+    textAlign: 'center',
+    marginTop: T.sm,
+    marginBottom: T.md,
+    lineHeight: 20,
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: T.primary,
+    borderRadius: T.radius,
+    paddingHorizontal: T.lg,
+    paddingVertical: T.md,
+    gap: T.sm,
+  },
+  emptyButtonText: {
+    color: T.white,
+    fontSize: T.fontMd,
+    fontWeight: '600',
+  },
   statsRow: {
     flexDirection: 'row',
     gap: T.sm,

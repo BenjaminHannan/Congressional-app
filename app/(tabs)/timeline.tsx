@@ -15,7 +15,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { getSymptomLogs, deleteSymptomLog } from '@/lib/storage';
 import { SYMPTOMS } from '@/lib/symptoms';
@@ -42,6 +42,7 @@ function getActiveSymptomLabels(log: SymptomLog): string[] {
 }
 
 export default function TimelineScreen() {
+  const router = useRouter();
   const [logs, setLogs] = useState<SymptomLog[]>([]);
 
   useFocusEffect(
@@ -77,11 +78,22 @@ export default function TimelineScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.emptyContainer}>
-          <MaterialIcons name="timeline" size={64} color={T.border} />
-          <Text style={styles.emptyTitle}>No entries yet</Text>
+          <MaterialIcons name="timeline" size={64} color={T.primary} />
+          <Text style={styles.emptyTitle}>Log your first symptom to start tracking</Text>
           <Text style={styles.emptyDesc}>
-            Your symptom timeline will appear here after you log your first day.
+            A dated record of how you feel is the most useful thing you can bring
+            to a doctor's appointment. Daily check-ins take under a minute.
           </Text>
+          <TouchableOpacity
+            style={styles.emptyButton}
+            onPress={() => router.push('/(tabs)/check')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Open symptom check"
+          >
+            <MaterialIcons name="fact-check" size={20} color={T.white} />
+            <Text style={styles.emptyButtonText}>Start Symptom Check</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -229,6 +241,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: T.sm,
     lineHeight: 20,
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: T.primary,
+    borderRadius: T.radius,
+    paddingHorizontal: T.lg,
+    paddingVertical: T.md,
+    gap: T.sm,
+    marginTop: T.lg,
+  },
+  emptyButtonText: {
+    color: T.white,
+    fontSize: T.fontMd,
+    fontWeight: '600',
   },
   // Timeline
   entryRow: {

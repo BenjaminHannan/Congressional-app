@@ -89,12 +89,36 @@ export default function ReportScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.emptyContainer}>
-          <MaterialIcons name="assessment" size={64} color={T.border} />
-          <Text style={styles.emptyTitle}>No data yet</Text>
+          <MaterialIcons name="assessment" size={64} color={T.primary} />
+          <Text style={styles.emptyTitle}>Log your first symptom to start tracking</Text>
           <Text style={styles.emptyDesc}>
-            Log your symptoms and complete the exposure assessment to see your
-            risk report.
+            The Doctor Report becomes available once you have at least one
+            symptom log or completed exposure assessment. It's the most
+            convincing thing you can bring to an appointment.
           </Text>
+          <TouchableOpacity
+            style={styles.emptyButton}
+            onPress={() => router.push('/(tabs)/check')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Start symptom check"
+          >
+            <MaterialIcons name="fact-check" size={20} color={T.white} />
+            <Text style={styles.emptyButtonText}>Start Symptom Check</Text>
+          </TouchableOpacity>
+          {!exposure && (
+            <TouchableOpacity
+              style={styles.emptySecondary}
+              onPress={() => router.push('/exposure-form')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Fill out exposure assessment"
+            >
+              <Text style={styles.emptySecondaryText}>
+                Or fill out the exposure assessment first
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -259,6 +283,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: T.sm,
     lineHeight: 20,
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: T.primary,
+    borderRadius: T.radius,
+    paddingHorizontal: T.lg,
+    paddingVertical: T.md,
+    gap: T.sm,
+    marginTop: T.lg,
+  },
+  emptyButtonText: {
+    color: T.white,
+    fontSize: T.fontMd,
+    fontWeight: '600',
+  },
+  emptySecondary: {
+    marginTop: T.md,
+    padding: T.sm,
+  },
+  emptySecondaryText: {
+    color: T.primary,
+    fontSize: T.fontSm,
+    fontWeight: '500',
   },
   // Risk card
   riskCard: {

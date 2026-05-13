@@ -142,6 +142,29 @@ Without the server, the Scan tab uses the on-device fallback classifier — noth
 
 ---
 
+## Building for distribution
+
+Trace is built with [EAS Build](https://docs.expo.dev/build/introduction/).
+The commands below assume you have the EAS CLI installed and are logged in
+(`npm install -g eas-cli` then `eas login`).
+
+```bash
+# One-time, from the trace/ directory
+eas build:configure
+
+# iOS — internal-distribution simulator build, no Apple Developer enrollment needed
+eas build --platform ios --profile preview
+
+# Android — installable .apk for sideloading onto a test device
+eas build --platform android --profile preview
+```
+
+For a production submission build (App Store / Play Store), swap
+`--profile preview` for `--profile production` once an `eas.json` profile is
+configured. See [EAS Build profiles](https://docs.expo.dev/build/eas-json/).
+
+---
+
 ## Tech stack
 
 - **Expo SDK 54** + **React Native 0.81** + **Expo Router 6** (file-based routing)

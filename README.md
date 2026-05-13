@@ -8,6 +8,15 @@ Built for the [Congressional App Challenge](https://www.congressionalappchalleng
 
 ---
 
+> ### Impact — why this matters in NH-02
+>
+> - **200+ cases per 100,000 people.** Hanover and Lyme each reported Lyme incidence rates north of 200/100k in 2019 — about 22× the US national average.
+> - **50%+ of adult ticks infected.** A UNH study of adult blacklegged ticks collected in Grafton County found over half carried *Borrelia burgdorferi*.
+> - **~30% bullseye rate.** Only about 30% of Lyme patients ever develop the classic erythema migrans bullseye — most never see the "obvious" sign.
+> - **2–4 week serology blind spot.** Standard antibody tests can return negative for the first 2–4 weeks of infection, exactly when treatment is most effective.
+
+---
+
 ## Why I built this
 
 A couple of years ago I was bitten by a tick in the woods around Hanover. I never saw a bullseye rash, my early symptoms looked like the flu, and by the time anyone connected the dots I had a full-blown case of Lyme disease that took months to recover from.

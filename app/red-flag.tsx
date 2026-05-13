@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import * as Haptics from 'expo-haptics';
 import { getSymptomLogs } from '@/lib/storage';
 import { getRedFlags } from '@/lib/symptoms';
 import { SymptomInfo } from '@/lib/types';
@@ -33,6 +34,14 @@ export default function RedFlagModal() {
   const [acknowledged, setAcknowledged] = useState(false);
 
   useEffect(() => {
+    // Warning haptic so the user feels the urgency the moment the modal
+    // appears, even if they're glancing away from the screen.
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(
+      () => {
+        // Haptics aren't available on web / some emulators — fail silently.
+      }
+    );
+
     async function load() {
       const logs = await getSymptomLogs();
       if (logs.length > 0) {

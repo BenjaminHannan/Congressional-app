@@ -46,6 +46,16 @@ Nothing leaves the phone unless the user explicitly exports a PDF. All data is s
 
 ---
 
+## Screenshots
+
+| Welcome | Home | Symptom check | NH map | Doctor PDF |
+|---|---|---|---|---|
+| ![Welcome](docs/screenshots/01-welcome.png) | ![Home](docs/screenshots/02-home.png) | ![Check](docs/screenshots/03-check.png) | ![Map](docs/screenshots/04-map.png) | ![PDF](docs/screenshots/05-pdf.png) |
+
+See [`docs/screenshots/README.md`](docs/screenshots/README.md) for what each capture should show.
+
+---
+
 ## Architecture
 
 ```

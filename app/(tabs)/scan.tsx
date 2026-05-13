@@ -355,6 +355,14 @@ export default function ScanScreen() {
             <Text style={styles.urgencyText}>{urgencyLabel}</Text>
           </View>
 
+          {/* Next-step one-liner — repeats the most important action up top */}
+          {result.actions[0] && (
+            <View style={styles.nextStepCard}>
+              <MaterialIcons name="arrow-forward" size={18} color={urgencyColor} />
+              <Text style={styles.nextStepText}>{result.actions[0]}</Text>
+            </View>
+          )}
+
           {/* Main classification card */}
           <View style={styles.resultCard}>
             <Text style={styles.resultTitle}>{result.title}</Text>
@@ -581,6 +589,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: T.fontSm,
     letterSpacing: 1,
+  },
+  nextStepCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.sm,
+    backgroundColor: T.card,
+    borderRadius: T.radiusSm,
+    paddingHorizontal: T.md,
+    paddingVertical: T.sm,
+    marginBottom: T.md,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  nextStepText: {
+    flex: 1,
+    fontSize: T.fontSm,
+    fontWeight: '600',
+    color: T.text,
+    lineHeight: 20,
   },
   resultCard: {
     backgroundColor: T.card,

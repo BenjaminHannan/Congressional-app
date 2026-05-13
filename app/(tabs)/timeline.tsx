@@ -127,6 +127,8 @@ export default function TimelineScreen() {
                     <TouchableOpacity
                       onPress={() => handleDelete(log)}
                       hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete log from ${formatDate(log.date)}`}
                     >
                       <MaterialIcons
                         name="delete-outline"

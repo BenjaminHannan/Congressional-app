@@ -33,6 +33,8 @@ export default function AdvocacyModal() {
         <TouchableOpacity
           style={styles.closeRow}
           onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Close advocacy guide"
         >
           <MaterialIcons name="close" size={24} color={T.textSecondary} />
         </TouchableOpacity>

@@ -241,6 +241,9 @@ export default function CheckScreen() {
                     isSelected && { backgroundColor: bg, borderColor: bg },
                   ]}
                   onPress={() => setSeverity(n)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSelected }}
+                  accessibilityLabel={`Severity ${n} of 10`}
                 >
                   <Text
                     style={[

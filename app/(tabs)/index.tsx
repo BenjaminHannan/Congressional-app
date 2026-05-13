@@ -232,8 +232,8 @@ export default function HomeScreen() {
 
         {/* Disclaimer */}
         <Text style={styles.disclaimer}>
-          Trace is an educational tool, not a diagnostic device.{'\n'}
-          Always consult a qualified healthcare provider.{'\n'}
+          Trace is not a medical device and does not diagnose disease.
+          It organizes information for you and your clinician.
           In an emergency, call 911.
         </Text>
       </ScrollView>

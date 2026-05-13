@@ -190,3 +190,26 @@ Trace is designed so a teenager in a household that doesn't believe in Lyme — 
 ## Status
 
 This is a Congressional App Challenge submission for NH-02, 2026. Built by Benjamin Hannan, Hanover, NH.
+
+---
+
+## Submission readiness
+
+### Done
+
+- [x] Blocker fixes: hardcoded ngrok URL replaced with a null-default `ML_SERVER_URL` constant; scan / timeline screens audited end-to-end; empty-state CTAs on Home, Timeline, and Report.
+- [x] Credibility: tightened medical disclaimer in the PDF header and home footer; tappable IDSA 2020 + CDC 2019–2023 citations on advocacy and check result; CDC source comment block + per-value verification TODO in `lib/nh-data.ts`.
+- [x] Polish: warning haptic on the red-flag modal mount; `accessibilityLabel`/`accessibilityRole` on icon-only buttons across `app/` and `components/`.
+- [x] About screen at `app/about.tsx`, reachable from an info icon in the Home tab header. Shows version (read from `app.json` via `expo-constants`), author, CAC NH-02 2026, and the disclaimer.
+- [x] `CHANGELOG.md` (v1.0.0) at the repo root.
+- [x] README: NH "Impact" callout, screenshots section + folder, EAS distribution commands.
+- [x] Unit tests: `jest` + `ts-jest` covering the risk engine's four headline contracts. Run with `npm test`.
+
+### Still mine
+
+- [ ] Record the demo video (90 s walkthrough hitting each tab + a red-flag flow).
+- [ ] Capture the five screenshots referenced in [`docs/screenshots/README.md`](docs/screenshots/README.md).
+- [ ] Design a custom app icon in Figma — `assets/images/icon.png` is still the default Expo icon.
+- [ ] Clinician outreach for an explicit medical-content review sign-off.
+- [ ] `eas build --platform ios --profile preview` and `--platform android --profile preview` once Apple/Google distribution is sorted out.
+- [ ] Verify every county incidence number, the NH state average, and the US national average against the latest CDC NNDSS release (checklist already in `lib/nh-data.ts`).

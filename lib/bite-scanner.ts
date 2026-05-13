@@ -13,6 +13,27 @@
 
 import * as FileSystem from 'expo-file-system/legacy';
 
+/**
+ * URL of the self-hosted ML inference server.
+ *
+ * Set to `null` by default — Trace works fully offline using the on-device
+ * questionnaire classifier in `analyzeBite()` below. The phone NEVER attempts
+ * a network call to a stale endpoint, which keeps the privacy story honest:
+ * by default no bite photo ever leaves the device.
+ *
+ * To wire up a live server during a demo:
+ *   1. cd ml-server && python server.py        (boots the FastAPI service)
+ *   2. ngrok http 8000                         (or any HTTPS tunnel)
+ *   3. Replace `null` below with the public URL string, e.g.
+ *        const ML_SERVER_URL: string | null = 'https://abcd-1234.ngrok-free.app';
+ *   4. Reload the app. The Scan screen will start sending photos to the server
+ *      and gracefully fall back to the on-device classifier if a request fails.
+ *
+ * Keep this null in checked-in code. ngrok URLs rotate and a stale value
+ * would silently waste 8 seconds per scan on a doomed fetch.
+ */
+const ML_SERVER_URL: string | null = null;
+
 export interface ScanAnswers {
   shape: 'circular' | 'oval' | 'irregular' | 'none';
   expanding: boolean;
@@ -390,7 +411,8 @@ export function classifyFromAnswers(answers: ScanAnswers): AIClassification {
  *        - Kaggle: sshikamaru/lyme-disease-full-dataset (EM rashes)
  *   2. Run the server: cd ml-server && python server.py
  *   3. Expose with ngrok: ngrok http 8000
- *   4. Paste your ngrok URL into ML_SERVER_CONFIG below
+ *   4. Replace `null` with your ngrok URL in the ML_SERVER_URL constant
+ *      at the top of this file (see comment block above for details)
  *   5. Reload the app
  *
  * Why this approach:
@@ -403,17 +425,11 @@ export function classifyFromAnswers(answers: ScanAnswers): AIClassification {
  * The app gracefully falls back to the on-device questionnaire
  * classifier when the server is unreachable.
  */
-const ML_SERVER_CONFIG = {
-  // Paste your ngrok URL here when running the home server
-  // Example: 'https://abcd-1234.ngrok-free.app'
-  url: 'https://sprinkled-arose-mumbo.ngrok-free.dev',
-
-  // How long to wait before falling back to on-device
-  timeoutMs: 8000,
-};
+/** How long to wait on the ML server before falling back to on-device. */
+const ML_SERVER_TIMEOUT_MS = 8000;
 
 export function isHomeServerConfigured(): boolean {
-  return ML_SERVER_CONFIG.url.length > 0;
+  return typeof ML_SERVER_URL === 'string' && ML_SERVER_URL.length > 0;
 }
 
 /**
@@ -424,8 +440,11 @@ export function isHomeServerConfigured(): boolean {
  * not the browser FileReader API.
  */
 export async function classifyWithML(imageUri: string): Promise<AIClassification | null> {
-  if (!isHomeServerConfigured()) {
-    console.log('[ML] Server not configured — skipping');
+  // When ML_SERVER_URL is null we skip the network entirely. Callers fall
+  // back to the on-device questionnaire classifier — no fetch attempt to a
+  // stale tunnel, no 8-second timeout, no leaked photo bytes.
+  if (!ML_SERVER_URL) {
+    console.log('[ML] Server not configured — using on-device classifier');
     return null;
   }
 
@@ -439,9 +458,9 @@ export async function classifyWithML(imageUri: string): Promise<AIClassification
 
     // Send to home server with timeout
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), ML_SERVER_CONFIG.timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), ML_SERVER_TIMEOUT_MS);
 
-    const apiResponse = await fetch(`${ML_SERVER_CONFIG.url}/classify`, {
+    const apiResponse = await fetch(`${ML_SERVER_URL}/classify`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

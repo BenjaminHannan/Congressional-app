@@ -24,6 +24,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {
   ScanResult,
@@ -34,7 +35,7 @@ import {
 } from '@/lib/bite-scanner';
 import { T } from '@/lib/theme';
 
-type Step = 'photo' | 'analyzing' | 'results' | 'error';
+type Step = 'photo' | 'analyzing' | 'results' | 'fallback' | 'error';
 
 const URGENCY_COLORS = {
   emergency: T.danger,
@@ -51,39 +52,44 @@ const URGENCY_LABELS = {
 };
 
 export default function ScanScreen() {
+  const router = useRouter();
   const [step, setStep] = useState<Step>('photo');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mlResult, setMlResult] = useState<AIClassification | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
-  /** Run the photo through the ML model and produce a ScanResult */
+  /**
+   * Run the photo through the ML model and produce a ScanResult.
+   *
+   * Order of operations:
+   *   1. If ML_SERVER_URL is configured, try the live model first.
+   *   2. If the server is not configured OR the request fails, drop into the
+   *      on-device questionnaire flow — the user answers a few quick visual
+   *      questions and the rule-based engine returns a structured assessment.
+   *
+   * This means Trace ALWAYS produces a useful result, even fully offline.
+   */
   async function analyzePhoto(uri: string) {
     setStep('analyzing');
     setErrorMsg('');
 
-    if (!isHomeServerConfigured()) {
-      setErrorMsg(
-        'AI model server is not configured. Set ML_SERVER_CONFIG.url in lib/bite-scanner.ts.'
-      );
-      setStep('error');
-      return;
-    }
-
     try {
-      const ml = await classifyWithML(uri);
-      if (!ml) {
-        setErrorMsg(
-          'Could not reach the AI model. Make sure the GPU server and ngrok tunnel are running.'
-        );
-        setStep('error');
-        return;
+      if (isHomeServerConfigured()) {
+        const ml = await classifyWithML(uri);
+        if (ml) {
+          setMlResult(ml);
+          setResult(mlClassificationToResult(ml));
+          setStep('results');
+          return;
+        }
+        // Server configured but unreachable — fall through to on-device.
       }
 
-      setMlResult(ml);
-      const scanResult = mlClassificationToResult(ml);
-      setResult(scanResult);
-      setStep('results');
+      // On-device fallback. The photo can't be auto-classified without a
+      // model, so we route the user to the symptom checker / questionnaire
+      // path instead of pretending we analyzed pixels we never read.
+      setStep('fallback');
     } catch (err: any) {
       setErrorMsg(`Analysis failed: ${err?.message || 'Unknown error'}`);
       setStep('error');
@@ -221,6 +227,77 @@ export default function ScanScreen() {
             </Text>
           </View>
         </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ─── Fallback Step (no ML server configured) ──────────────────────────
+  if (step === 'fallback') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScrollView contentContainerStyle={styles.scroll}>
+          {imageUri && (
+            <Image source={{ uri: imageUri }} style={styles.resultImage} />
+          )}
+
+          <View style={[styles.urgencyBadge, { backgroundColor: T.primary }]}>
+            <Text style={styles.urgencyText}>PHOTO SAVED</Text>
+          </View>
+
+          <View style={styles.resultCard}>
+            <Text style={styles.resultTitle}>On-device analysis</Text>
+            <Text style={styles.resultDesc}>
+              The Trace ML server is not running, so the photo was not
+              auto-classified. Your image stayed on this device — nothing was
+              uploaded. Use the symptom checker for a guided assessment, or
+              re-scan once the model is online.
+            </Text>
+          </View>
+
+          <Text style={styles.actionsTitle}>What To Do Next</Text>
+          {[
+            'Look closely at the bite: is it expanding? Does it have a circular ring with central clearing (a "bullseye")?',
+            'Open the Check tab and log any symptoms you have right now — fatigue, fever, joint pain, headache.',
+            'Photograph the area every 12–24 hours for the next 30 days. New EM rashes typically appear 3–30 days after a tick bite.',
+            'If the area expands beyond 5 cm or you develop flu-like symptoms, see a doctor.',
+            'In an emergency (severe headache + neck stiffness, facial droop, heart palpitations), call 911.',
+          ].map((action, i) => (
+            <View key={i} style={styles.actionRow}>
+              <View style={styles.actionNumber}>
+                <Text style={styles.actionNumText}>{i + 1}</Text>
+              </View>
+              <Text style={styles.actionText}>{action}</Text>
+            </View>
+          ))}
+
+          <TouchableOpacity
+            style={styles.scanAgainButton}
+            onPress={() => router.push('/(tabs)/check')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Open the symptom check tab"
+          >
+            <MaterialIcons name="fact-check" size={22} color={T.white} />
+            <Text style={styles.scanAgainText}>Log Symptoms Now</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.galleryButton}
+            onPress={reset}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Take or pick another photo"
+          >
+            <MaterialIcons name="photo-camera" size={20} color={T.primary} />
+            <Text style={styles.galleryButtonText}>Take Another Photo</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.disclaimer}>
+            Trace is not a medical device and does not diagnose disease. It
+            organizes information for you and your clinician. In an emergency,
+            call 911.
+          </Text>
+        </ScrollView>
       </SafeAreaView>
     );
   }

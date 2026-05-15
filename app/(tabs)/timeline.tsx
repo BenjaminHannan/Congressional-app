@@ -22,6 +22,7 @@ import { SYMPTOMS } from '@/lib/symptoms';
 import { SymptomLog } from '@/lib/types';
 import { T } from '@/lib/theme';
 import { predictFromLogs, TemporalPrediction } from '@/lib/ml/symptom-progression';
+import { forecastFromLogs, ForecastPrediction } from '@/lib/ml/forecast';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
@@ -114,6 +115,136 @@ function TrajectorySparkline({ pred }: { pred: TemporalPrediction }) {
     </View>
   );
 }
+
+/**
+ * Multi-horizon forecast of when red-flag symptoms (neck stiffness, facial
+ * droop, heart palpitations) are likely to emerge if untreated. Rendered as
+ * three horizon bars + a single headline. This is the unique-to-Trace
+ * capability — the heuristic risk engine cannot answer this question
+ * because it scores *current* state, not trajectory continuation.
+ */
+function ForecastCard({ pred }: { pred: ForecastPrediction }) {
+  // Highest-probability horizon dictates the headline color.
+  const maxProb = Math.max(...pred.probabilities);
+  const headlineColor =
+    maxProb >= 0.7 ? T.danger : maxProb >= 0.4 ? T.warning : T.success;
+
+  return (
+    <View style={forecastStyles.card}>
+      <View style={forecastStyles.headerRow}>
+        <MaterialIcons name="schedule" size={16} color={T.danger} />
+        <Text style={forecastStyles.title}>Red-Flag Forecast</Text>
+        <Text style={forecastStyles.subtitle}>(if untreated)</Text>
+      </View>
+
+      <Text style={[forecastStyles.headline, { color: headlineColor }]}>
+        {pred.soonestRedFlag}
+      </Text>
+
+      <View style={forecastStyles.horizonRow}>
+        {pred.horizons.map((d, i) => {
+          const p = pred.probabilities[i];
+          const color = p >= 0.7 ? T.danger : p >= 0.4 ? T.warning : T.success;
+          return (
+            <View key={d} style={forecastStyles.horizonCell}>
+              <Text style={forecastStyles.horizonDays}>{d}d</Text>
+              <View style={forecastStyles.horizonBarTrack}>
+                <View
+                  style={[
+                    forecastStyles.horizonBarFill,
+                    { width: `${Math.max(2, Math.round(p * 100))}%`, backgroundColor: color },
+                  ]}
+                />
+              </View>
+              <Text style={[forecastStyles.horizonPct, { color }]}>
+                {Math.round(p * 100)}%
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <Text style={forecastStyles.note}>
+        GRU forecast head predicts the probability that neck stiffness, facial
+        droop, or heart palpitations emerges within the horizon. Held-out
+        AUC: 0.82–0.85 (see About → How the AI works).
+      </Text>
+    </View>
+  );
+}
+
+const forecastStyles = StyleSheet.create({
+  card: {
+    backgroundColor: T.card,
+    borderRadius: T.radius,
+    padding: T.md,
+    marginBottom: T.md,
+    borderWidth: 1,
+    borderColor: T.dangerLight,
+    borderLeftWidth: 4,
+    borderLeftColor: T.danger,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  title: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+    color: T.text,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  subtitle: {
+    fontSize: T.fontXs,
+    color: T.textMuted,
+    fontStyle: 'italic',
+    flex: 1,
+  },
+  headline: {
+    fontSize: T.fontMd,
+    fontWeight: '700',
+    marginBottom: T.sm,
+    lineHeight: 22,
+  },
+  horizonRow: {
+    flexDirection: 'row',
+    gap: T.sm,
+    marginBottom: T.sm,
+  },
+  horizonCell: {
+    flex: 1,
+  },
+  horizonDays: {
+    fontSize: T.fontXs,
+    color: T.textSecondary,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  horizonBarTrack: {
+    height: 6,
+    backgroundColor: T.border,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  horizonBarFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  horizonPct: {
+    fontSize: T.fontSm,
+    fontWeight: '800',
+  },
+  note: {
+    fontSize: 10,
+    color: T.textMuted,
+    lineHeight: 14,
+    fontStyle: 'italic',
+  },
+});
 
 const sparkStyles = StyleSheet.create({
   card: {
@@ -246,17 +377,24 @@ export default function TimelineScreen() {
 
   // Guard against a corrupt JSON asset — the timeline view itself stays
   // usable even if the temporal model can't load.
-  let trajectoryPred = null;
+  let trajectoryPred: TemporalPrediction | null = null;
+  let forecastPred: ForecastPrediction | null = null;
   try {
     trajectoryPred = predictFromLogs(logs);
   } catch (err) {
     console.warn('[ML] temporal model failed, hiding sparkline:', err);
+  }
+  try {
+    forecastPred = forecastFromLogs(logs);
+  } catch (err) {
+    console.warn('[ML] forecast model failed, hiding forecast card:', err);
   }
 
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.scroll}>
         {trajectoryPred && <TrajectorySparkline pred={trajectoryPred} />}
+        {forecastPred && <ForecastCard pred={forecastPred} />}
 
         <Text style={styles.summary}>
           {logs.length} {logs.length === 1 ? 'entry' : 'entries'} logged

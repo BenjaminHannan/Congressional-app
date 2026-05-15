@@ -43,6 +43,11 @@ Trace is a privacy-first iOS/Android app (Expo + React Native) that helps people
 6. **Generate a doctor report** — one-tap PDF of dated symptom logs, exposure context, and risk factors. Seeing a written timeline is far more convincing than describing it from memory.
 7. **Patient advocacy** — ready-to-use scripts grounded in the IDSA 2020 guidelines for the "you've been told it's just a virus" case.
 8. **Full ML transparency** — *About → How the AI works* surfaces confusion matrix, calibration diagram, feature importances, and a model card with known limitations.
+9. **Multi-horizon red-flag forecasting** — a separate **GRU forecasting head** predicts the probability of red-flag symptoms (neck stiffness, facial droop, heart palpitations) emerging in 1/3/7 days. Held-out AUC 0.82–0.85. Surfaces as a "Red-Flag Forecast" card on the Timeline tab. This is what the heuristic baseline genuinely cannot do.
+10. **Voice/text symptom extraction** — type or dictate a free-text note ("I have a headache and my joints hurt, no fever"), tap **Extract symptoms from note**, and a pure-TS rule-based extractor with negation scoping auto-toggles the right symptoms. Pairs with the iOS/Android keyboard mic for true voice journaling.
+11. **Lyme antibiotic drug-interaction checker** — pick your prescribed antibiotic (doxycycline, amoxicillin, cefuroxime, ceftriaxone), type any other med you take, and see severity-coded interactions with mechanism, recommendation, and DailyMed/FDA citations.
+12. **Community tick-sightings map** — the NH Map tab now overlays UNH Cooperative Extension drag-sampling data and community-reported sightings. Tap **Report a sighting** to add your own. All local; backend federated submission is a future opt-in.
+13. **Coin-reference rash measurement** — photo + four taps (two on a US quarter, two on the rash) computes diameter in mm and flags the IDSA-2020 5 cm erythema migrans threshold. No AR module — works in Expo Go.
 
 Nothing leaves the phone unless the user explicitly exports a PDF. All data is stored locally with AsyncStorage. The fusion and temporal models run in pure TypeScript on-device — even risk synthesis never touches a server.
 
@@ -284,7 +289,12 @@ This is a Congressional App Challenge submission for NH-02, 2026. Built by Benja
 - [x] **ML explainability tab** at `app/ml-explainability.tsx` — confusion matrix, reliability diagram, feature importances, example rollout, and an honest limitations section.
 - [x] **Model card** at [`docs/ML.md`](docs/ML.md) — architectures, training data, held-out metrics, known limitations (synthetic-data caveat, demographic skew). Demo script at [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
 - [x] **HF Spaces deploy guide** at [`ml-server/README_HF_SPACES.md`](ml-server/README_HF_SPACES.md) + `Dockerfile` so the CV head can run on a stable free URL instead of laptop+ngrok.
-- [x] Unit tests: `jest` + `ts-jest` cover the heuristic risk engine AND the fusion + temporal models. Run with `npm test`.
+- [x] Unit tests: `jest` + `ts-jest` cover the heuristic risk engine AND the fusion, temporal, forecast, NLP, drug-interaction, and tick-sighting modules. 44 tests across 7 suites. Run with `npm test`.
+- [x] **Multi-horizon red-flag forecasting** — new GRU head + UI card on Timeline tab.
+- [x] **Voice/text symptom extraction** — rule-based NLP with negation scoping on the Check tab.
+- [x] **Drug-interaction checker** at `app/drug-check.tsx` — curated source-cited db, reachable from Advocacy.
+- [x] **Community tick-sightings map** — UNH Extension + community seed + user reports on the NH Map tab.
+- [x] **Coin-reference rash measurement** at `app/measure-rash.tsx` — photo + 4 taps = mm diameter, flagged against IDSA-2020 5 cm threshold.
 
 ### Still mine
 

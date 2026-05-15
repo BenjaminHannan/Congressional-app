@@ -25,6 +25,11 @@ import { saveSymptomLog, generateId, getExposure, getSymptomLogs } from '@/lib/s
 import { calculateRisk } from '@/lib/risk-engine';
 import { T } from '@/lib/theme';
 import { Citations } from '@/components/citations';
+import {
+  extractSymptoms,
+  mergeSymptoms,
+  SymptomMatch,
+} from '@/lib/ml/symptom-extractor';
 
 type Step = 'symptoms' | 'severity' | 'result';
 
@@ -48,6 +53,7 @@ export default function CheckScreen() {
   const [symptoms, setSymptoms] = useState<SymptomChecks>({ ...EMPTY_SYMPTOMS });
   const [severity, setSeverity] = useState(5);
   const [notes, setNotes] = useState('');
+  const [extractedMatches, setExtractedMatches] = useState<SymptomMatch[]>([]);
   const [result, setResult] = useState<{
     level: string;
     score: number;
@@ -104,6 +110,40 @@ export default function CheckScreen() {
     setSeverity(5);
     setNotes('');
     setResult(null);
+    setExtractedMatches([]);
+  }
+
+  /**
+   * Run the rule-based symptom extractor on the user's free-text notes.
+   * Toggles matched symptoms on (or off if negated) and shows a chip row
+   * with the phrases that triggered each match — so the user can sanity
+   * check the NLP rather than blindly trusting it.
+   */
+  function handleExtractFromNotes() {
+    const trimmed = notes.trim();
+    if (trimmed.length === 0) {
+      Alert.alert(
+        'Voice note is empty',
+        'Type or dictate a description first (use your phone keyboard\'s mic button for voice).',
+      );
+      return;
+    }
+    const { symptoms: extracted, matches } = extractSymptoms(trimmed);
+
+    // Apply matches: turn ON positives, turn OFF explicit negations.
+    const next: SymptomChecks = mergeSymptoms(symptoms, extracted);
+    for (const m of matches) {
+      if (m.negated) next[m.symptom] = false;
+    }
+    setSymptoms(next);
+    setExtractedMatches(matches);
+
+    if (matches.length === 0) {
+      Alert.alert(
+        'No symptoms found',
+        'The extractor didn\'t recognize any symptoms in your note. You can still tap them manually above.',
+      );
+    }
   }
 
   const activeCount = countSymptoms(symptoms);
@@ -280,11 +320,16 @@ export default function CheckScreen() {
             </View>
           </View>
 
-          {/* Notes */}
-          <Text style={styles.notesLabel}>Anything else to note? (optional)</Text>
+          {/* Notes + symptom extraction */}
+          <View style={styles.notesHeaderRow}>
+            <Text style={styles.notesLabel}>Voice note (optional)</Text>
+            <Text style={styles.notesHint}>
+              Tap the mic on your phone keyboard to dictate
+            </Text>
+          </View>
           <TextInput
             style={styles.notesInput}
-            placeholder="e.g., started after hiking yesterday, worse in the morning..."
+            placeholder="e.g., I have a bad headache and my joints ache. No fever."
             placeholderTextColor={T.textMuted}
             value={notes}
             onChangeText={setNotes}
@@ -292,6 +337,56 @@ export default function CheckScreen() {
             numberOfLines={3}
             textAlignVertical="top"
           />
+          <TouchableOpacity
+            style={styles.extractButton}
+            onPress={handleExtractFromNotes}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Extract symptoms from voice note"
+          >
+            <MaterialIcons name="auto-fix-high" size={18} color={T.primary} />
+            <Text style={styles.extractButtonText}>
+              Extract symptoms from note
+            </Text>
+          </TouchableOpacity>
+
+          {extractedMatches.length > 0 && (
+            <View style={styles.extractedBox}>
+              <Text style={styles.extractedTitle}>
+                Extracted {extractedMatches.length} mention
+                {extractedMatches.length === 1 ? '' : 's'}:
+              </Text>
+              <View style={styles.extractedChips}>
+                {extractedMatches.map((m, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.extractedChip,
+                      m.negated && styles.extractedChipNegated,
+                    ]}
+                  >
+                    <MaterialIcons
+                      name={m.negated ? 'remove-circle' : 'check-circle'}
+                      size={12}
+                      color={m.negated ? T.textMuted : T.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.extractedChipText,
+                        m.negated && styles.extractedChipTextNegated,
+                      ]}
+                    >
+                      {m.phrase}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={styles.extractedNote}>
+                Rule-based NLP, runs on-device. Review the toggles above —
+                you can override any extraction before submitting.
+              </Text>
+            </View>
+          )}
 
           {/* Submit */}
           <TouchableOpacity
@@ -617,11 +712,21 @@ const styles = StyleSheet.create({
   },
 
   // Notes
+  notesHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: T.xs,
+  },
   notesLabel: {
     fontSize: T.fontSm,
     fontWeight: '600',
     color: T.text,
-    marginBottom: T.sm,
+  },
+  notesHint: {
+    fontSize: 10,
+    color: T.textMuted,
+    fontStyle: 'italic',
   },
   notesInput: {
     backgroundColor: T.card,
@@ -632,7 +737,73 @@ const styles = StyleSheet.create({
     fontSize: T.fontSm,
     color: T.text,
     minHeight: 80,
+    marginBottom: T.sm,
+  },
+  extractButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: T.xs,
+    backgroundColor: T.primaryFaint,
+    borderRadius: T.radiusSm,
+    paddingVertical: T.sm,
+    borderWidth: 1,
+    borderColor: T.primaryLight,
+    marginBottom: T.md,
+  },
+  extractButtonText: {
+    color: T.primaryDark,
+    fontWeight: '700',
+    fontSize: T.fontSm,
+  },
+  extractedBox: {
+    backgroundColor: T.bg,
+    borderRadius: T.radiusSm,
+    padding: T.sm,
     marginBottom: T.lg,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  extractedTitle: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+    color: T.text,
+    marginBottom: T.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  extractedChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginBottom: T.xs,
+  },
+  extractedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: T.primaryFaint,
+    paddingHorizontal: T.sm,
+    paddingVertical: 4,
+    borderRadius: T.radiusFull,
+  },
+  extractedChipNegated: {
+    backgroundColor: T.border,
+  },
+  extractedChipText: {
+    fontSize: 11,
+    color: T.primaryDark,
+    fontWeight: '600',
+  },
+  extractedChipTextNegated: {
+    color: T.textMuted,
+    textDecorationLine: 'line-through',
+  },
+  extractedNote: {
+    fontSize: 10,
+    color: T.textMuted,
+    lineHeight: 14,
+    fontStyle: 'italic',
   },
 
   // Submit

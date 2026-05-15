@@ -88,3 +88,22 @@ export interface SymptomInfo {
   isRedFlag: boolean;
   redFlagMessage?: string;
 }
+
+// ─── Community Tick Sightings ────────────────────────────────────────────────
+
+/**
+ * A reported tick sighting. Stored locally on the user's device — there is
+ * no backend in the v1.1 release. The "community" overlay on the map is
+ * powered by `lib/tick-sightings.ts` which seeds with a curated set of
+ * sightings drawn from public NH surveillance reports.
+ */
+export type TickSightingSource = 'user' | 'community' | 'unh_extension';
+
+export interface TickSighting {
+  id: string;
+  date: string;             // ISO date string (YYYY-MM-DD)
+  county: string;           // NH county name (matches nh-data NH_COUNTIES)
+  town: string;             // Free-text town/area
+  source: TickSightingSource;
+  notes?: string;
+}

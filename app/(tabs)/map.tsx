@@ -11,7 +11,7 @@
  * recognizable state shape without needing an SVG library.
  */
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -20,7 +20,11 @@ import {
   SafeAreaView,
   ScrollView,
   Dimensions,
+  Alert,
+  TextInput,
+  Modal,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {
   NH_COUNTIES,
@@ -30,6 +34,17 @@ import {
   NH_LYME_FACT,
 } from '@/lib/nh-data';
 import { T } from '@/lib/theme';
+import { TickSighting } from '@/lib/types';
+import {
+  getTickSightings,
+  saveTickSighting,
+  generateId,
+} from '@/lib/storage';
+import {
+  summarizeByCounty,
+  getAllSightingsSorted,
+  CountySightingSummary,
+} from '@/lib/tick-sightings';
 
 const screenWidth = Dimensions.get('window').width;
 const MAP_PADDING = 24;
@@ -50,6 +65,27 @@ function getRiskColor(rate: number): string {
 function getRiskTextColor(rate: number): string {
   if (rate >= 130) return '#FFFFFF';
   return '#1C1917';
+}
+
+function sourceLabel(source: TickSighting['source']): string {
+  if (source === 'user') return 'you';
+  if (source === 'unh_extension') return 'UNH Ext.';
+  return 'community';
+}
+
+function sourceColor(source: TickSighting['source']): { backgroundColor: string } {
+  if (source === 'user') return { backgroundColor: T.primary };
+  if (source === 'unh_extension') return { backgroundColor: T.danger };
+  return { backgroundColor: T.warning };
+}
+
+function daysAgo(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  const diff = Math.floor((Date.now() - d.getTime()) / 86400_000);
+  if (diff <= 0) return 'today';
+  if (diff === 1) return '1d ago';
+  if (diff < 30) return `${diff}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 /**
@@ -75,10 +111,48 @@ const COUNTY_LAYOUT: Record<string, { top: number; left: number; width: number; 
 
 export default function MapScreen() {
   const [selected, setSelected] = useState<CountyData | null>(null);
+  const [userSightings, setUserSightings] = useState<TickSighting[]>([]);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportCounty, setReportCounty] = useState<string>('Grafton');
+  const [reportTown, setReportTown] = useState('');
+  const [reportNotes, setReportNotes] = useState('');
+
+  useFocusEffect(
+    useCallback(() => {
+      getTickSightings().then(setUserSightings).catch(() => {});
+    }, [])
+  );
+
+  const sightingsByCounty: Record<string, CountySightingSummary> =
+    summarizeByCounty(userSightings);
+  const recentSightings = getAllSightingsSorted(userSightings).slice(0, 6);
 
   // Sort counties by incidence rate for the list view
   const sortedCounties = [...NH_COUNTIES].sort((a, b) => b.incidenceRate - a.incidenceRate);
   const maxRate = Math.max(...NH_COUNTIES.map((c) => c.incidenceRate));
+
+  async function handleReportSighting() {
+    const town = reportTown.trim();
+    if (!town) {
+      Alert.alert('Town required', 'Enter the town or area where you found the tick.');
+      return;
+    }
+    const sighting: TickSighting = {
+      id: generateId(),
+      date: new Date().toISOString().slice(0, 10),
+      county: reportCounty,
+      town,
+      source: 'user',
+      notes: reportNotes.trim() || undefined,
+    };
+    await saveTickSighting(sighting);
+    const next = await getTickSightings();
+    setUserSightings(next);
+    setReportModalOpen(false);
+    setReportTown('');
+    setReportNotes('');
+    Alert.alert('Sighting saved', 'Stored locally on your device. Shows up immediately on the map.');
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -220,6 +294,137 @@ export default function MapScreen() {
             </Text>
           </View>
         )}
+
+        {/* Community tick sightings panel */}
+        <View style={styles.sightingsCard}>
+          <View style={styles.sightingsHeader}>
+            <MaterialIcons name="bug-report" size={18} color={T.danger} />
+            <Text style={styles.sightingsTitle}>Recent Tick Sightings</Text>
+            <Text style={styles.sightingsSubtitle}>(this season)</Text>
+          </View>
+          <Text style={styles.sightingsHelp}>
+            Combines local user reports with UNH Cooperative Extension drag
+            sampling and community-reported observations. {recentSightings.length}{' '}
+            shown · {Object.values(sightingsByCounty).reduce((a, c) => a + c.total, 0)}{' '}
+            total in database.
+          </Text>
+
+          {recentSightings.map((s) => (
+            <View key={s.id} style={styles.sightingRow}>
+              <View style={[styles.sightingDot, sourceColor(s.source)]} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sightingPrimary}>
+                  {s.town} ({s.county})
+                </Text>
+                {s.notes && (
+                  <Text style={styles.sightingNote} numberOfLines={2}>
+                    {s.notes}
+                  </Text>
+                )}
+              </View>
+              <Text style={styles.sightingMeta}>
+                {sourceLabel(s.source)} · {daysAgo(s.date)}
+              </Text>
+            </View>
+          ))}
+
+          <TouchableOpacity
+            style={styles.reportButton}
+            onPress={() => setReportModalOpen(true)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Report a tick sighting"
+          >
+            <MaterialIcons name="add-location" size={18} color={T.white} />
+            <Text style={styles.reportButtonText}>Report a sighting</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Report sighting modal */}
+        <Modal
+          visible={reportModalOpen}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setReportModalOpen(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Report a tick sighting</Text>
+                <TouchableOpacity
+                  onPress={() => setReportModalOpen(false)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close report sighting"
+                >
+                  <MaterialIcons name="close" size={22} color={T.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalLabel}>County</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.countyChipRow}
+              >
+                {NH_COUNTIES.map((c) => {
+                  const sel = reportCounty === c.name;
+                  return (
+                    <TouchableOpacity
+                      key={c.name}
+                      style={[styles.countyChip, sel && styles.countyChipActive]}
+                      onPress={() => setReportCounty(c.name)}
+                    >
+                      <Text
+                        style={[
+                          styles.countyChipText,
+                          sel && styles.countyChipTextActive,
+                        ]}
+                      >
+                        {c.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={styles.modalLabel}>Town or area</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. Hanover, Smarts Mountain trailhead"
+                placeholderTextColor={T.textMuted}
+                value={reportTown}
+                onChangeText={setReportTown}
+                autoCapitalize="words"
+              />
+
+              <Text style={styles.modalLabel}>Notes (optional)</Text>
+              <TextInput
+                style={[styles.modalInput, { minHeight: 56 }]}
+                placeholder="e.g. Pulled an attached deer tick after a hike"
+                placeholderTextColor={T.textMuted}
+                value={reportNotes}
+                onChangeText={setReportNotes}
+                multiline
+                textAlignVertical="top"
+              />
+
+              <TouchableOpacity
+                style={styles.modalSubmit}
+                onPress={handleReportSighting}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.modalSubmitText}>Save sighting</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.modalDisclaimer}>
+                Sightings are stored locally on your device only. No backend,
+                no PII, no telemetry. A future Trace release may add an
+                opt-in federated submission layer.
+              </Text>
+            </View>
+          </View>
+        </Modal>
 
         {/* County ranking list */}
         <Text style={styles.rankTitle}>All Counties — Ranked by Incidence</Text>
@@ -558,5 +763,169 @@ const styles = StyleSheet.create({
     color: T.textMuted,
     textAlign: 'center',
     lineHeight: 18,
+  },
+
+  // Community tick-sightings panel
+  sightingsCard: {
+    backgroundColor: T.card,
+    borderRadius: T.radius,
+    padding: T.md,
+    marginVertical: T.md,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  sightingsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  sightingsTitle: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+    color: T.text,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  sightingsSubtitle: {
+    fontSize: T.fontXs,
+    color: T.textMuted,
+    fontStyle: 'italic',
+    flex: 1,
+  },
+  sightingsHelp: {
+    fontSize: T.fontXs,
+    color: T.textSecondary,
+    lineHeight: 16,
+    marginBottom: T.sm,
+  },
+  sightingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: T.sm,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: T.border,
+  },
+  sightingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 6,
+  },
+  sightingPrimary: {
+    fontSize: T.fontSm,
+    fontWeight: '600',
+    color: T.text,
+  },
+  sightingNote: {
+    fontSize: T.fontXs,
+    color: T.textSecondary,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  sightingMeta: {
+    fontSize: 10,
+    color: T.textMuted,
+    fontWeight: '600',
+  },
+  reportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: T.sm,
+    backgroundColor: T.primary,
+    borderRadius: T.radiusSm,
+    paddingVertical: T.sm,
+    marginTop: T.sm,
+  },
+  reportButtonText: {
+    color: T.white,
+    fontSize: T.fontSm,
+    fontWeight: '700',
+  },
+
+  // Report sighting modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: T.card,
+    borderTopLeftRadius: T.radius,
+    borderTopRightRadius: T.radius,
+    padding: T.lg,
+    gap: T.sm,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: T.fontLg,
+    fontWeight: '700',
+    color: T.text,
+  },
+  modalLabel: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+    color: T.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginTop: T.sm,
+  },
+  countyChipRow: {
+    flexGrow: 0,
+  },
+  countyChip: {
+    paddingHorizontal: T.md,
+    paddingVertical: T.xs,
+    borderRadius: T.radiusFull,
+    backgroundColor: T.bg,
+    borderWidth: 1,
+    borderColor: T.border,
+    marginRight: T.xs,
+  },
+  countyChipActive: {
+    backgroundColor: T.primary,
+    borderColor: T.primary,
+  },
+  countyChipText: {
+    fontSize: T.fontXs,
+    fontWeight: '600',
+    color: T.text,
+  },
+  countyChipTextActive: {
+    color: T.white,
+  },
+  modalInput: {
+    backgroundColor: T.bg,
+    borderWidth: 1,
+    borderColor: T.border,
+    borderRadius: T.radiusSm,
+    padding: T.md,
+    fontSize: T.fontSm,
+    color: T.text,
+  },
+  modalSubmit: {
+    backgroundColor: T.primary,
+    borderRadius: T.radius,
+    paddingVertical: T.md,
+    alignItems: 'center',
+    marginTop: T.sm,
+  },
+  modalSubmitText: {
+    color: T.white,
+    fontSize: T.fontMd,
+    fontWeight: '700',
+  },
+  modalDisclaimer: {
+    fontSize: 10,
+    color: T.textMuted,
+    fontStyle: 'italic',
+    lineHeight: 14,
+    textAlign: 'center',
   },
 });

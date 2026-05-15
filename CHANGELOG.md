@@ -3,6 +3,46 @@
 All notable changes to Trace are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — five novel features the past CAC winners didn't do
+
+- **Multi-horizon red-flag forecasting.** New GRU forecasting head predicts
+  the probability of red-flag symptoms (neck stiffness, facial droop, heart
+  palpitations) emerging in 1, 3, or 7 days given the user's current
+  trajectory. Held-out AUC 0.82–0.85 on synthetic data — genuinely
+  predictive, not perfect-1.0-overfit. The heuristic risk engine cannot do
+  this; predicting *future* state requires the GRU's latent dynamics.
+- **Rule-based NLP symptom extractor.** Free-text or dictated voice notes
+  on the Check tab can be auto-converted into structured symptoms — with
+  negation scoping ("denies fatigue", "no headache but stiff neck")
+  handled deterministically. Suggestions are shown as chips the user can
+  accept or reject; nothing committed without confirmation.
+- **Lyme antibiotic drug-interaction checker.** Curated, source-cited
+  database of major interactions for doxycycline, amoxicillin, cefuroxime,
+  and ceftriaxone. Severity-coded results (contraindicated → major →
+  moderate → minor), each with mechanism, recommendation, and DailyMed/FDA
+  citation. Reachable from the Advocacy modal.
+- **Community tick-sightings map.** New "Recent Tick Sightings" panel on
+  the NH Map tab pre-seeded with public UNH Cooperative Extension drag-
+  sampling data and community-reported observations across all 10 NH
+  counties. Users can add their own sightings; everything is stored
+  locally (no backend in v1.2, called out honestly in the disclaimer).
+- **Coin-reference rash diameter measurement.** Photo + 4 taps (2 on the
+  US quarter, 2 on the rash) computes rash diameter in mm/cm and flags
+  the IDSA-2020 5 cm erythema migrans threshold. No native AR module —
+  works in Expo Go.
+
+Implementation:
+- `ml-server/train_forecast.py`, `gen_synthetic_trajectories.py` (existing)
+  → `assets/models/forecast_model.json` (59 KB).
+- `lib/ml/forecast.ts`, `lib/ml/symptom-extractor.ts`,
+  `lib/drug-interactions.ts`, `lib/tick-sightings.ts` — all pure-TS,
+  on-device.
+- New screens: `app/drug-check.tsx`, `app/measure-rash.tsx`.
+- New tests: `forecast.test.ts`, `symptom-extractor.test.ts`,
+  `drug-interactions.test.ts`, `tick-sightings.test.ts` — 27 new tests,
+  total 44/44 passing.
+- Metro bundles all 22 routes cleanly including the new modals.
+
 ## [1.1.0] — ML expansion
 
 - **Three-model ML pipeline.** Image (MobileNetV3, 8-class bug-bite classifier

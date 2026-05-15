@@ -128,6 +128,28 @@ export default function AdvocacyModal() {
           </TouchableOpacity>
         </View>
 
+        {/* Drug interactions link */}
+        <TouchableOpacity
+          style={styles.drugLink}
+          onPress={() => {
+            router.back();
+            setTimeout(() => router.push('/drug-check' as never), 100);
+          }}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Open drug interaction checker"
+        >
+          <MaterialIcons name="medication" size={24} color={T.primary} />
+          <View style={styles.drugLinkText}>
+            <Text style={styles.drugLinkTitle}>Check drug interactions</Text>
+            <Text style={styles.drugLinkDesc}>
+              See whether your other meds interact with the four IDSA-2020
+              first-line Lyme antibiotics
+            </Text>
+          </View>
+          <MaterialIcons name="chevron-right" size={20} color={T.textMuted} />
+        </TouchableOpacity>
+
         <Text style={styles.disclaimer}>
           These tips are based on publicly available CDC and IDSA clinical
           guidance. They are educational and do not constitute medical or legal
@@ -262,6 +284,30 @@ const styles = StyleSheet.create({
     color: T.white,
     fontSize: T.fontMd,
     fontWeight: '600',
+  },
+  // Drug-check link
+  drugLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.sm,
+    backgroundColor: T.primaryFaint,
+    borderRadius: T.radius,
+    padding: T.md,
+    marginBottom: T.lg,
+    borderWidth: 1,
+    borderColor: T.primaryLight,
+  },
+  drugLinkText: { flex: 1 },
+  drugLinkTitle: {
+    fontSize: T.fontMd,
+    fontWeight: '700',
+    color: T.primaryDark,
+  },
+  drugLinkDesc: {
+    fontSize: T.fontXs,
+    color: T.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
   },
   // Disclaimer
   disclaimer: {

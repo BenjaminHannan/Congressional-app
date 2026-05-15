@@ -211,6 +211,18 @@ export default function ScanScreen() {
             <Text style={styles.galleryButtonText}>Choose from Gallery</Text>
           </TouchableOpacity>
 
+          {/* Coin-reference ruler entry point */}
+          <TouchableOpacity
+            style={styles.galleryButton}
+            onPress={() => router.push('/measure-rash' as never)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Open rash measurement tool"
+          >
+            <MaterialIcons name="straighten" size={22} color={T.primary} />
+            <Text style={styles.galleryButtonText}>Measure rash diameter</Text>
+          </TouchableOpacity>
+
           {/* Tips */}
           <View style={styles.tipsCard}>
             <Text style={styles.tipsTitle}>Photo Tips</Text>

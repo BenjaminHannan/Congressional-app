@@ -21,7 +21,11 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { getSymptomLogs, getExposure, getProfile } from '@/lib/storage';
-import { calculateRisk } from '@/lib/risk-engine';
+import {
+  calculateRisk,
+  calculateRiskML,
+  MLRiskAssessment,
+} from '@/lib/risk-engine';
 import { countSymptoms, getRedFlags } from '@/lib/symptoms';
 import { getCountyRiskMessage } from '@/lib/nh-data';
 import { SymptomLog, ExposureData, UserProfile, RiskAssessment } from '@/lib/types';
@@ -47,6 +51,7 @@ export default function HomeScreen() {
   const [logs, setLogs] = useState<SymptomLog[]>([]);
   const [exposure, setExposure] = useState<ExposureData | null>(null);
   const [risk, setRisk] = useState<RiskAssessment | null>(null);
+  const [mlRisk, setMlRisk] = useState<MLRiskAssessment | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -65,6 +70,8 @@ export default function HomeScreen() {
     setExposure(e);
     if (l.length > 0 || e) {
       setRisk(calculateRisk(l, e));
+      // Fusion model runs entirely on-device; tree walk is microseconds.
+      setMlRisk(calculateRiskML(l, e));
     }
   }
 
@@ -106,31 +113,122 @@ export default function HomeScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Risk Card */}
-        {risk && (
-          <View style={[styles.riskCard, { backgroundColor: RISK_BG[risk.level] }]}>
+        {/* ML Risk Card (headline) */}
+        {mlRisk && (
+          <View style={[styles.riskCard, { backgroundColor: RISK_BG[mlRisk.level] }]}>
             <View style={styles.riskHeader}>
-              <Text style={styles.riskLabel}>Current Risk Assessment</Text>
+              <View style={styles.riskTitleRow}>
+                <MaterialIcons name="psychology" size={16} color={T.text} />
+                <Text style={styles.riskLabel}>ML Risk Assessment</Text>
+              </View>
               <View
                 style={[
                   styles.riskBadge,
-                  { backgroundColor: RISK_COLORS[risk.level] },
+                  { backgroundColor: RISK_COLORS[mlRisk.level] },
                 ]}
               >
                 <Text style={styles.riskBadgeText}>
-                  {risk.level.toUpperCase()}
+                  {mlRisk.level.toUpperCase()}
                 </Text>
               </View>
             </View>
-            <Text style={styles.riskScore}>Score: {risk.score}/100</Text>
-            <Text style={styles.riskRec} numberOfLines={3}>
-              {risk.recommendation}
+
+            <Text style={styles.riskGaugeNumber}>
+              {Math.round(mlRisk.lymeProbability * 100)}%
+            </Text>
+            <Text style={styles.riskGaugeLabel}>
+              fusion-model P(Lyme) — score {mlRisk.score}/100
+            </Text>
+
+            {/* Class probability bars */}
+            <View style={styles.classBars}>
+              {mlRisk.classProbabilities.map((p, i) => {
+                const label = ['No Lyme', 'Early Lyme', 'Disseminated'][i];
+                const color = [T.success, T.warning, T.danger][i];
+                return (
+                  <View key={i} style={styles.classBarRow}>
+                    <Text style={styles.classBarLabel}>{label}</Text>
+                    <View style={styles.classBar}>
+                      <View
+                        style={[
+                          styles.classBarFill,
+                          {
+                            width: `${Math.max(2, Math.round(p * 100))}%`,
+                            backgroundColor: color,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.classBarPct}>
+                      {Math.round(p * 100)}%
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            <Text style={styles.riskRec} numberOfLines={4}>
+              {mlRisk.recommendation}
+            </Text>
+
+            {/* Top contributing features */}
+            {mlRisk.contributions.length > 0 && (
+              <View style={styles.contribBlock}>
+                <Text style={styles.contribTitle}>What the model weighted</Text>
+                {mlRisk.contributions.slice(0, 4).map((c, i) => {
+                  const positive = c.deltaLymeProb > 0;
+                  return (
+                    <View key={i} style={styles.contribRow}>
+                      <MaterialIcons
+                        name={positive ? 'arrow-upward' : 'arrow-downward'}
+                        size={14}
+                        color={positive ? T.danger : T.success}
+                      />
+                      <Text style={styles.contribLabel}>{c.label}</Text>
+                      <Text
+                        style={[
+                          styles.contribDelta,
+                          { color: positive ? T.danger : T.success },
+                        ]}
+                      >
+                        {positive ? '+' : ''}
+                        {Math.round(c.deltaLymeProb * 100)}%
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Heuristic baseline (shown alongside, in muted styling) */}
+        {risk && mlRisk && (
+          <View style={styles.baselineCard}>
+            <View style={styles.baselineRow}>
+              <MaterialIcons name="calculate" size={16} color={T.textSecondary} />
+              <Text style={styles.baselineLabel}>Interpretable baseline</Text>
+              <View
+                style={[
+                  styles.baselineBadge,
+                  { backgroundColor: RISK_COLORS[risk.level] },
+                ]}
+              >
+                <Text style={styles.baselineBadgeText}>
+                  {risk.level.toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.baselineScore}>{risk.score}/100</Text>
+            </View>
+            <Text style={styles.baselineDesc}>
+              Hand-tuned scoring from CDC + IDSA criteria. Independent of the ML
+              model — useful as a sanity check.
             </Text>
           </View>
         )}
 
         {/* Empty state — first-run, before any symptom log or exposure */}
-        {!risk && (
+        {!risk && !mlRisk && (
           <View style={styles.emptyCard}>
             <MaterialIcons name="add-circle-outline" size={32} color={T.primary} />
             <Text style={styles.emptyTitle}>
@@ -272,7 +370,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: T.sm,
   },
-  riskLabel: { fontSize: T.fontSm, fontWeight: '600', color: T.text },
+  riskTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  riskLabel: { fontSize: T.fontSm, fontWeight: '700', color: T.text },
   riskBadge: {
     paddingHorizontal: T.md,
     paddingVertical: T.xs,
@@ -280,7 +379,109 @@ const styles = StyleSheet.create({
   },
   riskBadgeText: { color: T.white, fontWeight: '700', fontSize: T.fontXs },
   riskScore: { fontSize: T.fontXs, color: T.textSecondary, marginBottom: T.xs },
-  riskRec: { fontSize: T.fontSm, color: T.text, lineHeight: 20 },
+  riskRec: { fontSize: T.fontSm, color: T.text, lineHeight: 20, marginTop: T.sm },
+  riskGaugeNumber: {
+    fontSize: 38,
+    fontWeight: '800',
+    color: T.text,
+    marginTop: 2,
+    lineHeight: 42,
+  },
+  riskGaugeLabel: {
+    fontSize: T.fontXs,
+    color: T.textSecondary,
+    marginBottom: T.sm,
+  },
+  classBars: { marginTop: T.xs, marginBottom: T.sm, gap: 4 },
+  classBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.sm,
+  },
+  classBarLabel: {
+    fontSize: T.fontXs,
+    color: T.text,
+    fontWeight: '600',
+    width: 90,
+  },
+  classBar: {
+    flex: 1,
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.4)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  classBarFill: { height: 6, borderRadius: 3 },
+  classBarPct: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+    color: T.text,
+    width: 38,
+    textAlign: 'right',
+  },
+  contribBlock: {
+    marginTop: T.sm,
+    paddingTop: T.sm,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.08)',
+  },
+  contribTitle: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+    color: T.text,
+    marginBottom: T.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  contribRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.xs,
+    marginBottom: 4,
+  },
+  contribLabel: { flex: 1, fontSize: T.fontXs, color: T.text },
+  contribDelta: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+  },
+  baselineCard: {
+    backgroundColor: T.card,
+    borderRadius: T.radius,
+    padding: T.md,
+    marginBottom: T.md,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  baselineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.xs,
+    marginBottom: T.xs,
+  },
+  baselineLabel: {
+    flex: 1,
+    fontSize: T.fontXs,
+    color: T.textSecondary,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  baselineBadge: {
+    paddingHorizontal: T.sm,
+    paddingVertical: 2,
+    borderRadius: T.radiusFull,
+  },
+  baselineBadgeText: { color: T.white, fontWeight: '700', fontSize: 10 },
+  baselineScore: {
+    fontSize: T.fontXs,
+    fontWeight: '700',
+    color: T.text,
+  },
+  baselineDesc: {
+    fontSize: T.fontXs,
+    color: T.textMuted,
+    lineHeight: 16,
+  },
   emptyCard: {
     backgroundColor: T.primaryFaint,
     borderRadius: T.radius,

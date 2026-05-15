@@ -30,10 +30,26 @@ import {
   ScanResult,
   isHomeServerConfigured,
   classifyWithML,
+  explainWithML,
   mlClassificationToResult,
   AIClassification,
 } from '@/lib/bite-scanner';
 import { T } from '@/lib/theme';
+
+const PRETTY_LABELS: Record<string, string> = {
+  ants: 'Ant',
+  bed_bugs: 'Bed bug',
+  chiggers: 'Chigger',
+  fleas: 'Flea',
+  mosquitos: 'Mosquito',
+  no_bites: 'No bite',
+  spiders: 'Spider',
+  ticks: 'Tick',
+};
+
+function prettyLabel(label: string): string {
+  return PRETTY_LABELS[label.toLowerCase()] || label.replace(/_/g, ' ');
+}
 
 type Step = 'photo' | 'analyzing' | 'results' | 'fallback' | 'error';
 
@@ -57,6 +73,8 @@ export default function ScanScreen() {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mlResult, setMlResult] = useState<AIClassification | null>(null);
+  const [saliencyPng, setSaliencyPng] = useState<string | null>(null);
+  const [showSaliency, setShowSaliency] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
   /**
@@ -81,6 +99,11 @@ export default function ScanScreen() {
           setMlResult(ml);
           setResult(mlClassificationToResult(ml));
           setStep('results');
+          // Best-effort Grad-CAM — runs after classification so the user can
+          // already see results while the heatmap arrives.
+          explainWithML(uri).then((png) => {
+            if (png) setSaliencyPng(png);
+          });
           return;
         }
         // Server configured but unreachable — fall through to on-device.
@@ -147,6 +170,8 @@ export default function ScanScreen() {
     setImageUri(null);
     setResult(null);
     setMlResult(null);
+    setSaliencyPng(null);
+    setShowSaliency(false);
     setErrorMsg('');
   }
 
@@ -343,11 +368,49 @@ export default function ScanScreen() {
     const urgencyColor = URGENCY_COLORS[result.urgency];
     const urgencyLabel = URGENCY_LABELS[result.urgency];
 
+    const displayUri =
+      showSaliency && saliencyPng
+        ? `data:image/png;base64,${saliencyPng}`
+        : imageUri;
+    const topPreds = mlResult?.topPredictions ?? [];
+
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.scroll}>
-          {imageUri && (
-            <Image source={{ uri: imageUri }} style={styles.resultImage} />
+          {displayUri && (
+            <View>
+              <Image source={{ uri: displayUri }} style={styles.resultImage} />
+              {saliencyPng && (
+                <TouchableOpacity
+                  style={styles.saliencyToggle}
+                  onPress={() => setShowSaliency((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    showSaliency
+                      ? 'Hide AI saliency overlay'
+                      : 'Show AI saliency overlay'
+                  }
+                  activeOpacity={0.8}
+                >
+                  <MaterialIcons
+                    name={showSaliency ? 'visibility-off' : 'visibility'}
+                    size={16}
+                    color={T.white}
+                  />
+                  <Text style={styles.saliencyToggleText}>
+                    {showSaliency ? 'Show photo' : 'Show AI heat map'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {showSaliency && (
+            <Text style={styles.saliencyHint}>
+              Brighter regions are what the model looked at when making this
+              prediction. Computed with Grad-CAM on the last conv layer of
+              MobileNetV3.
+            </Text>
           )}
 
           {/* Urgency badge */}
@@ -384,23 +447,37 @@ export default function ScanScreen() {
             <Text style={styles.resultDesc}>{result.description}</Text>
           </View>
 
-          {/* AI model breakdown */}
-          {mlResult && mlResult.features.length > 0 && (
+          {/* Top-3 model predictions — full softmax view */}
+          {topPreds.length > 0 && (
             <View style={styles.mlCard}>
               <View style={styles.mlHeader}>
                 <MaterialIcons name="smart-toy" size={20} color={T.primary} />
-                <Text style={styles.mlTitle}>Model Breakdown</Text>
+                <Text style={styles.mlTitle}>What the AI saw</Text>
               </View>
               <Text style={styles.mlSubtext}>
-                Top predictions from the trained model
+                Top {topPreds.length} predictions across {mlResult?.features?.length
+                  ? `${topPreds.length}` : '8'} bite classes
               </Text>
-              <View style={styles.mlFeatures}>
-                {mlResult.features.map((f, i) => (
-                  <View key={i} style={styles.mlFeatureChip}>
-                    <Text style={styles.mlFeatureText}>{f}</Text>
+              {topPreds.map((p, i) => (
+                <View key={`${p.label}-${i}`} style={styles.predRow}>
+                  <Text style={styles.predLabel}>{prettyLabel(p.label)}</Text>
+                  <View style={styles.predBar}>
+                    <View
+                      style={[
+                        styles.predBarFill,
+                        {
+                          width: `${Math.max(2, p.confidence)}%`,
+                          backgroundColor:
+                            p.label.toLowerCase() === 'ticks'
+                              ? T.danger
+                              : T.primary,
+                        },
+                      ]}
+                    />
                   </View>
-                ))}
-              </View>
+                  <Text style={styles.predPct}>{p.confidence}%</Text>
+                </View>
+              ))}
             </View>
           )}
 
@@ -696,6 +773,60 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: T.textSecondary,
     fontWeight: '500',
+  },
+  saliencyToggle: {
+    position: 'absolute',
+    bottom: T.sm + T.md,
+    right: T.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    paddingHorizontal: T.sm,
+    paddingVertical: 6,
+    borderRadius: T.radiusFull,
+  },
+  saliencyToggleText: {
+    color: T.white,
+    fontSize: T.fontXs,
+    fontWeight: '600',
+  },
+  saliencyHint: {
+    fontSize: T.fontXs,
+    color: T.textSecondary,
+    marginBottom: T.md,
+    lineHeight: 18,
+    fontStyle: 'italic',
+  },
+  predRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: T.sm,
+    marginTop: T.xs,
+  },
+  predLabel: {
+    fontSize: T.fontXs,
+    color: T.text,
+    fontWeight: '600',
+    width: 70,
+  },
+  predBar: {
+    flex: 1,
+    height: 6,
+    backgroundColor: T.border,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  predBarFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  predPct: {
+    fontSize: T.fontXs,
+    fontWeight: '600',
+    color: T.text,
+    width: 38,
+    textAlign: 'right',
   },
 
   // Actions

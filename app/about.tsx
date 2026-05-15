@@ -71,6 +71,23 @@ export default function AboutScreen() {
           </TouchableOpacity>
         </View>
 
+        <TouchableOpacity
+          style={styles.mlLink}
+          onPress={() => router.push('/ml-explainability' as never)}
+          accessibilityRole="button"
+          accessibilityLabel="Open ML model details"
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="psychology" size={22} color={T.primary} />
+          <View style={styles.mlLinkText}>
+            <Text style={styles.mlLinkTitle}>How the AI works</Text>
+            <Text style={styles.mlLinkDesc}>
+              Metrics, calibration, feature importances, model card
+            </Text>
+          </View>
+          <MaterialIcons name="chevron-right" size={20} color={T.textMuted} />
+        </TouchableOpacity>
+
         <View style={styles.disclaimerCard}>
           <Text style={styles.disclaimerTitle}>Medical disclaimer</Text>
           <Text style={styles.disclaimerText}>
@@ -147,6 +164,20 @@ const styles = StyleSheet.create({
     color: T.primary,
     textDecorationLine: 'underline',
   },
+  mlLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: T.primaryFaint,
+    borderRadius: T.radius,
+    padding: T.md,
+    marginTop: T.md,
+    borderWidth: 1,
+    borderColor: T.primaryLight,
+    gap: T.sm,
+  },
+  mlLinkText: { flex: 1 },
+  mlLinkTitle: { fontSize: T.fontMd, fontWeight: '700', color: T.primaryDark },
+  mlLinkDesc: { fontSize: T.fontXs, color: T.textSecondary, marginTop: 2 },
   disclaimerCard: {
     backgroundColor: T.warningBg,
     borderRadius: T.radius,

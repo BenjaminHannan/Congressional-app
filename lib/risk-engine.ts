@@ -16,6 +16,12 @@
 import { SymptomLog, ExposureData, RiskAssessment, RiskLevel, SymptomChecks } from './types';
 import { getRedFlags } from './symptoms';
 import { getCountyData, NH_STATE_AVERAGE_RATE, US_NATIONAL_AVERAGE_RATE } from './nh-data';
+import {
+  predictRisk,
+  prettyFeatureName,
+  FusionPrediction,
+} from './ml/risk-fusion';
+import { EMPTY_SYMPTOMS } from './symptoms';
 
 /**
  * Calculate overall Lyme risk assessment.
@@ -207,6 +213,133 @@ export function calculateRisk(
     redFlags,
     recommendation,
     updatedAt: new Date().toISOString(),
+  };
+}
+
+// ─── ML Fusion Risk Assessment ────────────────────────────────────────────
+//
+// `calculateRisk` above is the explainable, hand-tuned heuristic. The function
+// below runs the trained gradient-boosted fusion model from
+// `lib/ml/risk-fusion.ts` over the same inputs and returns a `RiskAssessment`
+// in the same shape, plus per-feature contribution bars for the UI.
+//
+// We keep both engines on purpose: the heuristic is the floor — easy to read,
+// trivially auditable, never fails. The ML model is the lift — it accounts for
+// feature interactions the hand-tuned weights can't capture, and it produces
+// a *calibrated* probability that maps directly to a 0–100 risk score.
+//
+// In the UI, the ML score is the headline and the heuristic is shown as the
+// "interpretable baseline" so a viewer can see they agree.
+
+export interface MLRiskAssessment extends RiskAssessment {
+  /** Probabilities for [no_lyme, early_lyme, disseminated_lyme] */
+  classProbabilities: number[];
+  /** P(early_lyme) + P(disseminated_lyme) — what the gauge displays. */
+  lymeProbability: number;
+  /** Top contributing features. Positive = pushes toward Lyme. */
+  contributions: { label: string; rawFeature: string; deltaLymeProb: number }[];
+}
+
+function lymeProbToScore(p: number): number {
+  // Map [0,1] → [0,100] with a slight non-linear stretch so middle-of-the-road
+  // probabilities don't all collapse into "moderate". sqrt is the cheapest
+  // way to give the gauge some breathing room at lower probabilities.
+  const stretched = Math.sqrt(Math.max(0, Math.min(1, p)));
+  return Math.round(stretched * 100);
+}
+
+function levelFromScoreAndFlags(score: number, redFlags: string[]): RiskLevel {
+  if (redFlags.length > 0) return 'critical';
+  if (score >= 65) return 'high';
+  if (score >= 35) return 'moderate';
+  return 'low';
+}
+
+function recommendationFromLevel(level: RiskLevel): string {
+  switch (level) {
+    case 'critical':
+      return (
+        'You have symptoms that require urgent medical attention. ' +
+        'Go to the ER or call 911 immediately. Do not wait for a scheduled appointment.'
+      );
+    case 'high':
+      return (
+        'The ML model assesses your symptom pattern and exposure history as ' +
+        'consistent with possible Lyme disease. See a doctor as soon as possible ' +
+        'and generate the Doctor Report below to bring with you. Ask about ' +
+        'empirical doxycycline — in endemic areas, IDSA guidelines support ' +
+        'starting treatment based on clinical suspicion without waiting for tests.'
+      );
+    case 'moderate':
+      return (
+        'The ML model picks up some signal in your symptoms and exposure. ' +
+        'Consider scheduling an appointment with your doctor and continue ' +
+        'logging symptoms daily — a clear pattern over several days strengthens ' +
+        'the case and updates this score.'
+      );
+    default:
+      return (
+        'Based on current data, the ML model assesses your Lyme risk as low. ' +
+        'Continue monitoring and logging symptoms. The assessment will update ' +
+        'automatically as your record grows.'
+      );
+  }
+}
+
+/**
+ * Run the fusion model over the user's most recent symptom log + exposure
+ * context. Returns a `RiskAssessment` plus full class probabilities and
+ * per-feature contribution attributions.
+ *
+ * Falls back to an all-zero symptom vector when the user has no logs yet, so
+ * the engine still produces a meaningful score from exposure alone.
+ */
+export function calculateRiskML(
+  logs: SymptomLog[],
+  exposure: ExposureData | null
+): MLRiskAssessment {
+  const latest = logs[0];
+  const symptoms: SymptomChecks = latest?.symptoms ?? { ...EMPTY_SYMPTOMS };
+
+  const pred: FusionPrediction = predictRisk({
+    symptoms,
+    exposure,
+    logCount: Math.max(1, logs.length),
+  });
+
+  const redFlagInfos = latest ? getRedFlags(symptoms) : [];
+  const redFlags = redFlagInfos.map(
+    (rf) => rf.redFlagMessage || rf.label
+  );
+
+  const score = lymeProbToScore(pred.lymeProbability);
+  const level = levelFromScoreAndFlags(score, redFlags);
+  const recommendation = recommendationFromLevel(level);
+
+  // Build human-readable factors from the model's top contributions.
+  const factors: string[] = pred.contributions
+    .filter((c) => c.deltaLymeProb > 0)
+    .slice(0, 5)
+    .map(
+      (c) =>
+        `${prettyFeatureName(c.feature)} — ` +
+        `model attributes ${Math.round(c.deltaLymeProb * 100)}% of the Lyme signal here`
+    );
+
+  return {
+    level,
+    score,
+    factors,
+    redFlags,
+    recommendation,
+    updatedAt: new Date().toISOString(),
+    classProbabilities: pred.probabilities,
+    lymeProbability: pred.lymeProbability,
+    contributions: pred.contributions.map((c) => ({
+      label: prettyFeatureName(c.feature),
+      rawFeature: c.feature,
+      deltaLymeProb: c.deltaLymeProb,
+    })),
   };
 }
 

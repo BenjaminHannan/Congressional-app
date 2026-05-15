@@ -17,8 +17,10 @@ import base64
 import io
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -242,6 +244,131 @@ def classify(req: ClassifyRequest):
         description=description,
         features=features,
         top_predictions=top_predictions,
+    )
+
+
+class ExplainRequest(BaseModel):
+    image: str  # base64-encoded JPEG
+
+
+class ExplainResponse(BaseModel):
+    saliency_png: str            # base64-encoded PNG overlay
+    target_label: str            # class whose CAM is shown
+    target_confidence: float     # softmax prob (0–1) for that class
+
+
+# ── Grad-CAM helpers ──
+#
+# Standard Grad-CAM on MobileNetV3's last conv block (`features[-1]`):
+#   1. Forward pass, register a hook to capture activations A and gradients dY/dA.
+#   2. Take the gradient w.r.t. the predicted class logit.
+#   3. Channel-wise average the gradients → importance weights αk.
+#   4. ReLU(Σk αk · Ak) → 7×7 saliency map.
+#   5. Upsample to 224×224 and blend over the original image as a heat map.
+#
+# Implemented inline rather than via pytorch-grad-cam to keep dependencies thin.
+
+def _last_conv_module(m: nn.Module) -> nn.Module:
+    """MobileNetV3-Large's last conv lives in `features[-1]`."""
+    return m.features[-1]
+
+
+def _gradcam(
+    model: nn.Module, tensor: torch.Tensor, target_idx: int
+) -> np.ndarray:
+    """Return a (224, 224) float32 heatmap in [0, 1] for `target_idx`."""
+    activations: dict[str, torch.Tensor] = {}
+    gradients: dict[str, torch.Tensor] = {}
+
+    layer = _last_conv_module(model)
+
+    def fwd_hook(_module, _inp, out):
+        activations['v'] = out
+
+    def bwd_hook(_module, _grad_in, grad_out):
+        gradients['v'] = grad_out[0]
+
+    fwd = layer.register_forward_hook(fwd_hook)
+    bwd = layer.register_full_backward_hook(bwd_hook)
+
+    try:
+        model.zero_grad(set_to_none=True)
+        # Manually re-enable grad on a clone since outer caller used no_grad
+        x = tensor.clone().detach().requires_grad_(True)
+        logits = model(x)
+        score = logits[0, target_idx]
+        score.backward()
+
+        act = activations['v'][0]              # (C, h, w)
+        grad = gradients['v'][0]               # (C, h, w)
+        weights = grad.mean(dim=(1, 2))        # (C,)
+        cam = (weights[:, None, None] * act).sum(dim=0)
+        cam = F.relu(cam)
+        cam = cam - cam.min()
+        denom = cam.max()
+        if denom.item() > 1e-8:
+            cam = cam / denom
+        cam = cam.detach().cpu().numpy()
+
+        # Upsample to 224×224 via bilinear interpolation
+        cam_t = torch.from_numpy(cam)[None, None, ...]
+        cam_up = F.interpolate(cam_t, size=(224, 224), mode='bilinear', align_corners=False)
+        return cam_up[0, 0].numpy().astype(np.float32)
+    finally:
+        fwd.remove()
+        bwd.remove()
+
+
+def _overlay_heatmap(img_rgb: Image.Image, heatmap: np.ndarray) -> Image.Image:
+    """Blend a [0,1] heatmap over the original image using a viridis-like LUT."""
+    base = img_rgb.resize((224, 224)).convert('RGB')
+    base_arr = np.asarray(base, dtype=np.float32) / 255.0
+
+    # Simple red-yellow LUT (avoids pulling in matplotlib at request time)
+    h = np.clip(heatmap, 0.0, 1.0)
+    r = np.clip(1.5 * h, 0.0, 1.0)
+    g = np.clip(1.5 * h - 0.5, 0.0, 1.0)
+    b = np.zeros_like(h)
+    cam_rgb = np.stack([r, g, b], axis=-1)
+
+    alpha = 0.45 * h[..., None]
+    blended = base_arr * (1 - alpha) + cam_rgb * alpha
+    blended = (np.clip(blended, 0.0, 1.0) * 255).astype(np.uint8)
+    return Image.fromarray(blended)
+
+
+@app.post('/explain', response_model=ExplainResponse)
+def explain(req: ExplainRequest):
+    """Return a Grad-CAM saliency PNG over the photo, focused on the top class."""
+    if model is None:
+        raise HTTPException(503, 'Model not loaded. Run train.py first.')
+
+    try:
+        img_bytes = base64.b64decode(req.image)
+        img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+    except Exception as e:
+        raise HTTPException(400, f'Invalid image: {e}')
+
+    tensor = preprocess(img).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        logits = model(tensor)
+        probs = torch.softmax(logits, dim=1)[0]
+    target_idx = int(torch.argmax(probs).item())
+    target_label = classes[target_idx]
+    target_conf = float(probs[target_idx].item())
+
+    heatmap = _gradcam(model, tensor, target_idx)
+    overlay = _overlay_heatmap(img, heatmap)
+
+    buf = io.BytesIO()
+    overlay.save(buf, format='PNG', optimize=True)
+    saliency_png = base64.b64encode(buf.getvalue()).decode('ascii')
+
+    return ExplainResponse(
+        saliency_png=saliency_png,
+        target_label=target_label,
+        target_confidence=target_conf,
     )
 
 

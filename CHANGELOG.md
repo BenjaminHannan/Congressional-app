@@ -3,6 +3,37 @@
 All notable changes to Trace are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — ML expansion
+
+- **Three-model ML pipeline.** Image (MobileNetV3, 8-class bug-bite classifier
+  hosted as an optional FastAPI service), fusion risk (gradient-boosted decision
+  trees trained on a 10k-row synthetic cohort grounded in IDSA 2020 + CDC
+  surveillance priors), and a tiny GRU that scores the *shape* of a user's
+  symptom trajectory across days. The fusion and temporal models run pure-TS
+  on-device — no native modules, no EAS dev build required, no data leaves
+  the phone.
+- **Grad-CAM saliency.** Scan results screen has a toggle that overlays a
+  red-yellow heat map showing which pixels of the photo the model used.
+- **Per-feature contribution attribution.** Home screen surfaces the top
+  features the fusion model weighted on the current input, computed by
+  single-feature ablation.
+- **Trajectory sparkline.** Timeline tab renders the GRU's per-day Lyme
+  probability as a sparkline above the entry list, with trend badge.
+- **ML Explainability tab** (`app/ml-explainability.tsx`) reachable from
+  About. Confusion matrix, reliability diagram, feature importances,
+  example trajectory rollout, and a model card with limitations (synthetic
+  training data, demographic skew in skin imagery).
+- **Reproducible training pipeline** in `ml-server/`. Four scripts
+  (`gen_synthetic_cohort.py`, `train_risk_fusion.py`,
+  `gen_synthetic_trajectories.py`, `train_temporal.py`) regenerate the
+  fusion + temporal models byte-identically from seed.
+- **HF Spaces deploy guide** + `Dockerfile` for the CV head.
+- **Held-out metrics** at submission: fusion accuracy 0.96, AUC 0.99,
+  Brier 0.025; temporal AUC ~1.0 on synthetic data (artifact, called out
+  in the model card).
+- **Tests.** Added `risk-fusion.test.ts` and `symptom-progression.test.ts`
+  alongside the existing risk-engine tests.
+
 ## [1.0.0] — 2026 Congressional App Challenge submission
 
 Initial release.

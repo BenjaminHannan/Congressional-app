@@ -209,10 +209,70 @@ export function analyzeBite(answers: ScanAnswers): ScanResult {
 /**
  * Map an ML classification to a ScanResult.
  *
- * The model now returns a binary tick/not-tick decision. Since this app
- * is specifically about Lyme disease, only tick bites carry meaningful
- * medical risk in our scope.
+ * The CV model classifies bite photos into 8 mutually exclusive classes
+ * (ants, bed_bugs, chiggers, fleas, mosquitos, no_bites, spiders, ticks).
+ * Only tick bites carry meaningful Lyme risk, so tick predictions escalate
+ * to "see a doctor soon" while everything else stays in monitor/low_concern.
+ *
+ * The CV model does NOT classify erythema migrans rashes — that's the job
+ * of the on-device questionnaire (analyzeBite below), which scores CDC
+ * clinical criteria (bullseye, expansion, size, duration). The two
+ * subsystems are complementary, not redundant.
  */
+const NON_TICK_BITE_TYPES: Record<string, { title: string; blurb: string }> = {
+  ants: {
+    title: 'Ant Bite or Sting',
+    blurb:
+      'The model identified this as an ant bite or sting. These usually heal on their own in a few days. Fire-ant stings can form pustules — see a doctor if you have severe pain, spreading redness, or signs of an allergic reaction.',
+  },
+  bed_bugs: {
+    title: 'Bed Bug Bite',
+    blurb:
+      'The model identified this as a bed bug bite. These often appear in clusters or short lines, itch for several days, and are not medically dangerous. If confirmed, treating your living space prevents more bites.',
+  },
+  chiggers: {
+    title: 'Chigger Bite',
+    blurb:
+      'The model identified this as a chigger bite. Chigger bites are extremely itchy, often appear around sock or waistband lines, and clear up on their own in 1–2 weeks.',
+  },
+  fleas: {
+    title: 'Flea Bite',
+    blurb:
+      'The model identified this as a flea bite. These usually appear as small red bumps on the lower legs or ankles. Treating pets and the environment prevents more bites.',
+  },
+  mosquitos: {
+    title: 'Mosquito Bite',
+    blurb:
+      'The model identified this as a mosquito bite — a common itchy bump that resolves within a few days. No medical attention needed unless there are signs of infection.',
+  },
+  no_bites: {
+    title: 'No Bite Detected',
+    blurb:
+      'The model did not find a bite or unusual skin mark in this image. If you still have concerns, try a sharper, closer photo with good natural light.',
+  },
+  spiders: {
+    title: 'Spider Bite',
+    blurb:
+      'The model identified this as a spider bite. Most spider bites are harmless, but a small number (e.g., brown recluse, black widow) can be serious. Watch for spreading redness, severe pain, or tissue damage and see a doctor if those appear.',
+  },
+};
+
+const TICK_ACTIONS = [
+  'If a tick is still attached, remove it with fine-tipped tweezers — grasp close to the skin and pull straight out',
+  'Save the tick in a sealed bag (your doctor may want to identify the species)',
+  'Take a dated photo of the bite right now for comparison later',
+  'Watch for an expanding rash (especially with central clearing) over the next 3–30 days — see a doctor immediately if you see one',
+  'Log the bite date in Trace and check daily for new symptoms (fatigue, fever, headache, joint pain)',
+  'In NH, ask your doctor about empirical doxycycline if symptoms develop — IDSA guidelines support this in endemic areas',
+];
+
+const NON_TICK_ACTIONS = [
+  'Keep the area clean and watch it heal normally',
+  'If it gets worse (spreading redness, pus, severe pain), see a doctor',
+  'Take another photo if anything changes — you can always rescan',
+  'If you also have flu-like symptoms or a separate expanding rash, log them in the Check tab',
+];
+
 export function mlClassificationToResult(ml: AIClassification): ScanResult {
   const label = ml.label.toLowerCase();
   const isTick = label === 'tick' || label === 'ticks';
@@ -224,38 +284,28 @@ export function mlClassificationToResult(ml: AIClassification): ScanResult {
       title: 'Tick Bite',
       description:
         ml.description ||
-        'The model identified this as a tick bite. In New Hampshire, ' +
-        'tick bites carry a real risk of Lyme disease. Most tick bites do ' +
-        'NOT result in Lyme — but watch carefully and act early if symptoms appear.',
+        'The model identified this as a tick bite. In New Hampshire, tick ' +
+        'bites carry a real risk of Lyme disease. Most tick bites do NOT ' +
+        'result in Lyme — but watch carefully and act early if symptoms appear.',
       urgency: 'soon',
-      actions: [
-        'If a tick is still attached, remove it with fine-tipped tweezers — grasp close to the skin and pull straight out',
-        'Save the tick in a sealed bag (your doctor may want to identify the species)',
-        'Take a dated photo of the bite right now for comparison later',
-        'Watch for an expanding rash (especially with central clearing) over the next 3-30 days — see a doctor immediately if you see one',
-        'Log the bite date in Trace and check daily for new symptoms (fatigue, fever, headache, joint pain)',
-        'In NH, ask your doctor about empirical doxycycline if symptoms develop — IDSA guidelines support this in endemic areas',
-      ],
+      actions: TICK_ACTIONS,
     };
   }
 
-  // Not a tick bite — much lower concern from a Lyme standpoint
+  const known = NON_TICK_BITE_TYPES[label];
+  const isNoBite = label === 'no_bites' || label === 'no_bite';
+
   return {
-    classification: 'low_concern',
+    classification: isNoBite ? 'low_concern' : 'possible_bite',
     confidence: ml.confidence,
-    title: 'Not a Tick Bite',
+    title: known?.title || 'Insect Bite',
     description:
       ml.description ||
-      'The model is confident this is not a tick bite. From a Lyme disease ' +
-      'standpoint, no urgent action is needed. If the area concerns you for ' +
-      'other reasons (severe pain, infection, allergic reaction), see a doctor.',
+      known?.blurb ||
+      'The model classified this as a non-tick bite. From a Lyme disease ' +
+      'standpoint, no urgent action is needed.',
     urgency: 'monitor',
-    actions: [
-      'No tick-specific action needed',
-      'Keep the area clean and watch for normal healing',
-      'If it gets worse (spreading redness, pus, severe pain), see a doctor',
-      'Take another photo if anything changes — you can always rescan',
-    ],
+    actions: NON_TICK_ACTIONS,
   };
 }
 
@@ -274,14 +324,10 @@ export const EMPTY_SCAN_ANSWERS: ScanAnswers = {
 };
 
 /**
- * On-Device Classification Engine
+ * On-Device Questionnaire Engine — complementary to the CV model.
  *
- * Trace's bite analysis runs entirely on the phone — no internet required,
- * no API costs, no data leaves your device.
- *
- * The engine uses an expert system based on CDC clinical criteria for
- * erythema migrans detection. Each visual feature is weighted according
- * to its diagnostic significance in the medical literature:
+ * Where the CV model classifies bite *type* (tick, mosquito, etc.), this
+ * engine scores CDC clinical criteria for *erythema migrans* (the Lyme rash):
  *
  *   - Center clearing (bullseye) — 35% weight — pathognomonic for EM
  *   - Expanding + circular shape — combined 25% weight — key EM criterion
@@ -289,16 +335,9 @@ export const EMPTY_SCAN_ANSWERS: ScanAnswers = {
  *   - Size > 5cm — 15% weight — characteristic of EM
  *   - Tick visible / 3-30 day onset — context modifiers
  *
- * This is more clinically useful than a poorly-trained ML model on a
- * tiny dataset. The questionnaire teaches users what to look for AND
- * creates structured data their doctor can use.
- *
- * Future improvement path:
- *   When the project moves out of Expo Go to a custom dev build,
- *   a TensorFlow Lite model trained on the Kaggle Bug Bite Images
- *   dataset (1,300 images, 8 classes) + Lyme EM Rashes dataset
- *   (5,000+ images) can be added via react-native-fast-tflite.
- *   Train via Google Teachable Machine or PyTorch + ONNX export.
+ * The questionnaire runs entirely on-device, requires no model weights,
+ * and produces structured data a doctor can read. The CV model adds an
+ * image-grounded prior on top.
  */
 
 /** Result from the analysis engine — unified shape for future ML integration */
@@ -310,8 +349,10 @@ export interface AIClassification {
   biteType: string;
   /** When true, the model is not confident enough to give a specific answer */
   uncertain?: boolean;
-  /** Top 3 predictions with confidence — useful when uncertain */
+  /** Top 3 predictions with confidence (0–100) — full softmax view */
   topPredictions?: { label: string; confidence: number }[];
+  /** Base64-encoded PNG of the Grad-CAM saliency overlay, if /explain was called */
+  saliencyPng?: string;
 }
 
 /**
@@ -482,15 +523,66 @@ export async function classifyWithML(imageUri: string): Promise<AIClassification
     const data = await apiResponse.json();
     console.log(`[ML] Got classification: ${data.label} (${data.confidence})`);
 
+    const topPredictions: { label: string; confidence: number }[] = Array.isArray(
+      data.top_predictions
+    )
+      ? data.top_predictions.map((p: any) => ({
+          label: String(p.label || 'unknown'),
+          confidence: Math.round((Number(p.confidence) || 0) * 100),
+        }))
+      : [];
+
     return {
       label: data.label || 'unknown',
       confidence: Math.round((data.confidence || 0) * 100),
       description: data.description || `Classified as ${data.label} by AI model.`,
       features: data.features || [],
       biteType: data.bite_type || data.label || 'Unknown',
+      topPredictions,
     };
   } catch (err: any) {
     console.warn('[ML] Request failed:', err?.message || err);
+    return null;
+  }
+}
+
+/**
+ * Ask the server for a Grad-CAM saliency overlay of the photo. Returns the
+ * base64 PNG ready for <Image source={{ uri: `data:image/png;base64,${...}` }} />.
+ * Best-effort — silently returns null on any failure so the UI keeps working.
+ */
+export async function explainWithML(imageUri: string): Promise<string | null> {
+  if (!ML_SERVER_URL) return null;
+
+  try {
+    const base64 = await FileSystem.readAsStringAsync(imageUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ML_SERVER_TIMEOUT_MS);
+
+    const apiResponse = await fetch(`${ML_SERVER_URL}/explain`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+      body: JSON.stringify({ image: base64 }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!apiResponse.ok) {
+      console.warn(`[ML] /explain ${apiResponse.status}`);
+      return null;
+    }
+
+    const data = await apiResponse.json();
+    return typeof data.saliency_png === 'string' ? data.saliency_png : null;
+  } catch (err: any) {
+    console.warn('[ML] /explain failed:', err?.message || err);
     return null;
   }
 }

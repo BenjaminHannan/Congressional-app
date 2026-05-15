@@ -36,13 +36,15 @@ By the time the diagnosis is obvious, the easy-to-treat window has often closed.
 Trace is a privacy-first iOS/Android app (Expo + React Native) that helps people who suspect Lyme:
 
 1. **Log symptoms daily** — 14 Lyme-specific symptoms tracked, including red flags (Bell's palsy, neck stiffness, heart palpitations) that need ER attention immediately.
-2. **Scan a bite or rash** — phone camera + an image classifier distinguishes tick bites and erythema migrans rashes from mosquito/spider/flea bites. Runs on a self-hosted PyTorch model with an on-device questionnaire fallback.
-3. **Get a synthesized risk assessment** — combines symptom pattern, exposure history, and NH county-level CDC data into a 0–100 score with a clear recommendation (continue monitoring → see doctor → ER now).
-4. **See local risk on a map** — every NH county color-coded by Lyme incidence rate vs. the national average.
-5. **Generate a doctor report** — one-tap PDF of dated symptom logs, exposure context, and risk factors to bring to an appointment. Seeing a written timeline is far more convincing than describing it from memory.
-6. **Patient advocacy** — for the "you've been told it's just a virus" case, ready-to-use scripts grounded in the IDSA 2020 guidelines (e.g., asking about empirical doxycycline in endemic areas without waiting for serology).
+2. **Scan a bite or rash** — phone camera + a fine-tuned **MobileNetV3** classifier identifies the bite type. Tap to view a **Grad-CAM saliency overlay** showing what the model looked at. On-device questionnaire (CDC erythema migrans criteria) fills in when the cloud server is unreachable.
+3. **See a fusion-model risk score** — a **gradient-boosted decision-tree ensemble** combines 14 symptom flags, exposure context, and NH county incidence into a calibrated 0–100 probability of Lyme. Runs entirely on-device. The hand-tuned heuristic engine is shown alongside as an interpretable baseline.
+4. **Watch your trajectory** — a tiny **GRU** scores the *shape* of your symptom history across days. Rendered as a sparkline on the Timeline tab — climbing is the visual signal a doctor wants to see.
+5. **Local risk on a map** — every NH county color-coded by Lyme incidence rate vs. the national average.
+6. **Generate a doctor report** — one-tap PDF of dated symptom logs, exposure context, and risk factors. Seeing a written timeline is far more convincing than describing it from memory.
+7. **Patient advocacy** — ready-to-use scripts grounded in the IDSA 2020 guidelines for the "you've been told it's just a virus" case.
+8. **Full ML transparency** — *About → How the AI works* surfaces confusion matrix, calibration diagram, feature importances, and a model card with known limitations.
 
-Nothing leaves the phone unless the user explicitly exports a PDF. All data is stored locally with AsyncStorage.
+Nothing leaves the phone unless the user explicitly exports a PDF. All data is stored locally with AsyncStorage. The fusion and temporal models run in pure TypeScript on-device — even risk synthesis never touches a server.
 
 ---
 
@@ -67,27 +69,88 @@ trace/
 │   ├── exposure-form.tsx     # Initial exposure questionnaire
 │   ├── red-flag.tsx          # Modal: ER-now warning
 │   ├── advocacy.tsx          # Modal: doctor advocacy scripts
+│   ├── about.tsx             # Modal: version, repo, disclaimer
+│   ├── ml-explainability.tsx # Modal: ML model card + metrics
 │   └── (tabs)/
-│       ├── index.tsx         # Home — risk dashboard
-│       ├── scan.tsx          # Photo classifier
+│       ├── index.tsx         # Home — ML risk gauge + baseline
+│       ├── scan.tsx          # MobileNetV3 + Grad-CAM
 │       ├── check.tsx         # Daily symptom check
 │       ├── map.tsx           # NH county risk map
 │       ├── report.tsx        # PDF generator
-│       └── timeline.tsx      # Symptom history
+│       └── timeline.tsx      # GRU trajectory sparkline + entries
 ├── lib/
 │   ├── types.ts              # Core data shapes
 │   ├── storage.ts            # AsyncStorage wrappers
 │   ├── symptoms.ts           # Symptom catalog + red-flag rules
-│   ├── risk-engine.ts        # 0–100 risk scoring
+│   ├── risk-engine.ts        # Heuristic + ML risk synthesis
 │   ├── nh-data.ts            # NH county CDC incidence data
-│   ├── bite-scanner.ts       # ML server + on-device fallback
+│   ├── bite-scanner.ts       # ML server client + Grad-CAM fetcher
 │   ├── pdf-generator.ts      # Doctor-report PDF builder
-│   └── theme.ts              # Design tokens
-├── components/             # Shared UI primitives
-└── ml-server/              # Self-hosted PyTorch classifier (see below)
+│   ├── theme.ts              # Design tokens
+│   └── ml/
+│       ├── risk-fusion.ts        # Pure-TS GBM tree walker
+│       └── symptom-progression.ts # Pure-TS GRU forward pass
+├── assets/
+│   ├── models/                  # Trained model JSON (bundled)
+│   │   ├── risk_model.json         # ~100 KB GBM
+│   │   └── temporal_model.json     # ~30 KB GRU
+│   └── ml-metrics/              # Held-out metrics for explainability tab
+│       ├── fusion_metrics.json
+│       └── temporal_metrics.json
+├── ml-server/              # FastAPI + PyTorch CV head + training pipeline
+│   ├── server.py               # /classify + /explain (Grad-CAM)
+│   ├── train.py                # MobileNetV3 fine-tuning
+│   ├── gen_synthetic_cohort.py  # Phase 2 training data
+│   ├── train_risk_fusion.py     # GBM training + JSON export
+│   ├── gen_synthetic_trajectories.py
+│   ├── train_temporal.py        # GRU training + JSON export
+│   ├── Dockerfile               # For HF Spaces deploy
+│   └── README_HF_SPACES.md      # Cloud-deploy guide
+└── docs/
+    ├── ML.md                   # Full model card
+    └── DEMO_SCRIPT.md          # 90-second video script
 ```
 
-### Risk engine
+### Machine learning
+
+Trace runs three trained models and a heuristic baseline. The heuristic
+is the floor — easy to read, trivially auditable. The ML models are the
+lift. Both are surfaced in the UI so a viewer can see they agree. Full
+model card (architectures, training data, held-out metrics, limitations)
+is in [`docs/ML.md`](docs/ML.md).
+
+```
+inputs                  models                       UI
+──────                  ──────                       ──
+bite photo  ───────►  MobileNetV3 (8-class)  ────►  Scan tab
+                      + Grad-CAM saliency           (top-3 bars + heat map)
+
+14-day symptom  ────► GRU (hidden=16, ~1.5k    ────► Timeline sparkline
+trajectory            params, per-day prob)
+
+symptoms +      ────► Gradient-boosted          ────► Home risk gauge
+exposure +            decision trees            ────► (calibrated P(Lyme)
+NH county             (3-class, calibrated)            + per-feature bars)
+```
+
+| Head | Where it runs | Held-out metric |
+|---|---|---|
+| **CV** — bite type | Cloud FastAPI (optional, see [`ml-server/`](ml-server/)) | 8-class softmax |
+| **Fusion** — risk synthesis | **On-device, pure-TS** | Accuracy 0.96, AUC 0.99, Brier 0.025 |
+| **Temporal** — trajectory | **On-device, pure-TS** | AUC 1.00 (synthetic; see model card) |
+
+The fusion and temporal models bundle as JSON assets
+(`assets/models/risk_model.json`, `assets/models/temporal_model.json`) and
+walk in pure TypeScript at runtime — no native modules, no EAS dev build
+required. The CV head requires the cloud server; the Scan tab gracefully
+falls back to an on-device questionnaire when it's not reachable.
+
+In-app, tap **About → How the AI works** to see the confusion matrix,
+reliability diagram, feature importances, an example trajectory rollout,
+and the honest list of known limitations (synthetic training data,
+demographic skew in skin imagery, not a diagnostic device).
+
+### Risk engine (heuristic baseline)
 
 [`lib/risk-engine.ts`](lib/risk-engine.ts) synthesizes four signals into a single score:
 
@@ -98,17 +161,28 @@ trace/
 | Geographic risk | 20 | NH county incidence vs. national average |
 | Duration / persistence | 10 | sustained pattern across 3+ days |
 
-Any red-flag symptom (facial droop, neck stiffness, heart palpitations) immediately escalates the assessment to **critical** and surfaces the ER modal — these are signs of neuro-Lyme or Lyme carditis and they don't wait.
+Any red-flag symptom (facial droop, neck stiffness, heart palpitations) immediately escalates the assessment to **critical** and surfaces the ER modal — these are signs of neuro-Lyme or Lyme carditis and they don't wait. This logic also overrides the ML head when red flags are present.
 
 The engine is **not a diagnostic tool.** It's a structured way for patients to walk into a doctor's office with organized evidence instead of a vague "I haven't felt right."
 
-### ML classifier
+### Reproducing the ML pipeline
 
-[`ml-server/`](ml-server/) is a small FastAPI + PyTorch service that classifies bite/rash photos. It's trained on two public Kaggle datasets (Bug Bite Images + Lyme EM Rashes) covering 9 classes: ant, bed bug, chigger, flea, mosquito, spider, tick, erythema migrans, and uninfected skin.
+```bash
+cd ml-server
+./venv/Scripts/python.exe gen_synthetic_cohort.py --n 10000
+./venv/Scripts/python.exe train_risk_fusion.py
+./venv/Scripts/python.exe gen_synthetic_trajectories.py --n 10000
+./venv/Scripts/python.exe train_temporal.py
+```
 
-The phone sends a base64 JPEG, gets back a label + confidence + top-3 predictions. When the server isn't reachable, [`lib/bite-scanner.ts`](lib/bite-scanner.ts) falls back to an on-device questionnaire-based classifier so the app keeps working offline.
+The four commands generate the synthetic cohorts, train the fusion GBM
+and temporal GRU, and mirror the resulting JSON artifacts into
+`assets/models/` and `assets/ml-metrics/`. Re-running with the same seed
+produces byte-identical outputs.
 
-See [`ml-server/README.md`](ml-server/README.md) for setup and training instructions.
+For the CV head, see [`ml-server/README.md`](ml-server/README.md) (Kaggle
+dataset download + `train.py` instructions). The deploy guide is
+[`ml-server/README_HF_SPACES.md`](ml-server/README_HF_SPACES.md).
 
 ---
 
@@ -203,12 +277,20 @@ This is a Congressional App Challenge submission for NH-02, 2026. Built by Benja
 - [x] About screen at `app/about.tsx`, reachable from an info icon in the Home tab header. Shows version (read from `app.json` via `expo-constants`), author, CAC NH-02 2026, and the disclaimer.
 - [x] `CHANGELOG.md` (v1.0.0) at the repo root.
 - [x] README: NH "Impact" callout, screenshots section + folder, EAS distribution commands.
-- [x] Unit tests: `jest` + `ts-jest` covering the risk engine's four headline contracts. Run with `npm test`.
+- [x] **Three-model ML pipeline:** MobileNetV3 image classifier (CV) + sklearn GBM (fusion risk) + tiny GRU (temporal trajectory). Fusion + temporal models run pure-TS on-device. Full reproducible training pipeline in `ml-server/`.
+- [x] **Grad-CAM saliency overlay** on the Scan tab — `/explain` endpoint on the FastAPI server, base64 PNG rendered with a toggle on the result screen.
+- [x] **Home ML risk gauge** with class-probability bars and per-feature contribution attributions, plus the heuristic baseline shown alongside as a sanity check.
+- [x] **Timeline trajectory sparkline** powered by an on-device GRU forward pass.
+- [x] **ML explainability tab** at `app/ml-explainability.tsx` — confusion matrix, reliability diagram, feature importances, example rollout, and an honest limitations section.
+- [x] **Model card** at [`docs/ML.md`](docs/ML.md) — architectures, training data, held-out metrics, known limitations (synthetic-data caveat, demographic skew). Demo script at [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
+- [x] **HF Spaces deploy guide** at [`ml-server/README_HF_SPACES.md`](ml-server/README_HF_SPACES.md) + `Dockerfile` so the CV head can run on a stable free URL instead of laptop+ngrok.
+- [x] Unit tests: `jest` + `ts-jest` cover the heuristic risk engine AND the fusion + temporal models. Run with `npm test`.
 
 ### Still mine
 
-- [ ] Record the demo video (90 s walkthrough hitting each tab + a red-flag flow).
-- [ ] Capture the five screenshots referenced in [`docs/screenshots/README.md`](docs/screenshots/README.md).
+- [ ] Record the demo video — script lives at [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
+- [ ] Capture the eight screenshots referenced in [`docs/screenshots/README.md`](docs/screenshots/README.md), including the three new ML captures (Grad-CAM overlay, Timeline sparkline, ML Explainability tab).
+- [ ] Deploy `ml-server/` to Hugging Face Spaces and paste the URL into `lib/bite-scanner.ts::ML_SERVER_URL`. Step-by-step in [`ml-server/README_HF_SPACES.md`](ml-server/README_HF_SPACES.md).
 - [ ] Design a custom app icon in Figma — `assets/images/icon.png` is still the default Expo icon.
 - [ ] Clinician outreach for an explicit medical-content review sign-off.
 - [ ] `eas build --platform ios --profile preview` and `--platform android --profile preview` once Apple/Google distribution is sorted out.

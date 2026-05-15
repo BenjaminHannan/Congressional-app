@@ -244,7 +244,14 @@ export default function TimelineScreen() {
     );
   }
 
-  const trajectoryPred = predictFromLogs(logs);
+  // Guard against a corrupt JSON asset — the timeline view itself stays
+  // usable even if the temporal model can't load.
+  let trajectoryPred = null;
+  try {
+    trajectoryPred = predictFromLogs(logs);
+  } catch (err) {
+    console.warn('[ML] temporal model failed, hiding sparkline:', err);
+  }
 
   return (
     <SafeAreaView style={styles.safe}>

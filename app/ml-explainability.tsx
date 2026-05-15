@@ -22,10 +22,18 @@ import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { T } from '@/lib/theme';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const FUSION = require('../assets/ml-metrics/fusion_metrics.json');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const TEMPORAL = require('../assets/ml-metrics/temporal_metrics.json');
+// Wrapped so that a missing/corrupt metrics asset shows a graceful empty
+// state instead of crashing the whole screen on mount.
+let FUSION: any = null;
+let TEMPORAL: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  FUSION = require('../assets/ml-metrics/fusion_metrics.json');
+} catch {}
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  TEMPORAL = require('../assets/ml-metrics/temporal_metrics.json');
+} catch {}
 
 interface FusionMetrics {
   accuracy: number;
@@ -58,8 +66,8 @@ interface TemporalMetrics {
   example_per_step_prob: number[];
 }
 
-const fusion: FusionMetrics = FUSION;
-const temporal: TemporalMetrics = TEMPORAL;
+const fusion: FusionMetrics | null = FUSION;
+const temporal: TemporalMetrics | null = TEMPORAL;
 
 function pct(x: number, digits = 1): string {
   return `${(x * 100).toFixed(digits)}%`;
@@ -67,6 +75,28 @@ function pct(x: number, digits = 1): string {
 
 export default function MLExplainabilityScreen() {
   const router = useRouter();
+
+  if (!fusion || !temporal) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScrollView contentContainerStyle={styles.scroll}>
+          <TouchableOpacity
+            style={styles.closeRow}
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Close explainability screen"
+          >
+            <MaterialIcons name="close" size={24} color={T.textSecondary} />
+          </TouchableOpacity>
+          <Text style={styles.h1}>How the AI works</Text>
+          <Text style={styles.p}>
+            ML metrics assets could not be loaded. Run the training pipeline
+            (see docs/ML.md → Reproducibility) to regenerate them.
+          </Text>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   // Top-5 feature importances for the fusion model
   const topFeatures = fusion.feature_names

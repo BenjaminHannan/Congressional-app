@@ -76,10 +76,14 @@ Fatigue +9%, ...
 - Record on a real device with `ML_SERVER_URL` configured for the demo
   (HF Spaces URL from `ml-server/README_HF_SPACES.md`). The Grad-CAM beat
   fails without a live server.
-- The Timeline sparkline needs at least 5 logged days to show motion. Either
-  use the 5-day montage above or seed AsyncStorage with the demo dataset
-  (`scripts/seed-demo-data.js` if it exists; otherwise log live in the
-  recording).
+- The Timeline sparkline needs at least 5 logged days to show motion.
+  Either use the 5-day montage above OR seed the demo dataset:
+  **About screen → long-press the version number → "Load demo data"**.
+  This wipes any current state and seeds a 7-day climbing Lyme
+  trajectory + matching NH exposure record + an ER-bound Day-0 entry
+  with neckStiffness + facialDroop, so every ML view (Home gauge,
+  Timeline sparkline, ML Explainability tab) populates immediately.
+  Defined in `lib/demo-data.ts`.
 - The honest "AUC=1.00 is a synthetic-data artifact" beat in the model card
   is intentional. Calling it out yourself is judged better than having a
   judge spot it.

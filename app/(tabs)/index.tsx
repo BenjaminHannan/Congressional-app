@@ -71,7 +71,14 @@ export default function HomeScreen() {
     if (l.length > 0 || e) {
       setRisk(calculateRisk(l, e));
       // Fusion model runs entirely on-device; tree walk is microseconds.
-      setMlRisk(calculateRiskML(l, e));
+      // Wrap defensively so a corrupt model asset can never blank the home
+      // screen — the heuristic baseline stays visible no matter what.
+      try {
+        setMlRisk(calculateRiskML(l, e));
+      } catch (err) {
+        console.warn('[ML] fusion model failed, falling back to heuristic only:', err);
+        setMlRisk(null);
+      }
     }
   }
 

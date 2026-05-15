@@ -13,11 +13,13 @@ import {
   SafeAreaView,
   ScrollView,
   Linking,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import Constants from 'expo-constants';
 import { T } from '@/lib/theme';
+import { seedDemoData } from '@/lib/demo-data';
 
 // Pulls the app version from app.json at build time.
 const APP_VERSION =
@@ -25,6 +27,31 @@ const APP_VERSION =
 
 export default function AboutScreen() {
   const router = useRouter();
+
+  function handleDemoSeed() {
+    Alert.alert(
+      'Load demo data?',
+      'This wipes any data currently saved in Trace and seeds a 7-day climbing Lyme trajectory plus matching exposure context. Designed for the CAC demo video — not for normal use.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Load demo data',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const n = await seedDemoData();
+              Alert.alert(
+                'Demo data loaded',
+                `Seeded ${n} days of symptom logs. Open Home, Timeline, and Report to see the ML cards populate.`,
+              );
+            } catch (err: any) {
+              Alert.alert('Seed failed', err?.message || 'Unknown error');
+            }
+          },
+        },
+      ]
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -41,7 +68,15 @@ export default function AboutScreen() {
         <View style={styles.header}>
           <Text style={styles.logo}>🔬</Text>
           <Text style={styles.appName}>Trace</Text>
-          <Text style={styles.version}>Version {APP_VERSION}</Text>
+          <TouchableOpacity
+            onLongPress={handleDemoSeed}
+            delayLongPress={1200}
+            activeOpacity={0.6}
+            accessibilityRole="text"
+            accessibilityLabel={`Version ${APP_VERSION}. Long-press to load CAC demo data.`}
+          >
+            <Text style={styles.version}>Version {APP_VERSION}</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.card}>
